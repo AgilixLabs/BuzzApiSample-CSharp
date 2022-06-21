@@ -195,7 +195,7 @@ namespace BuzzAPISample
 
                     int waitTime = GetRetryWaitTime(baseWaitTime, retryHeader);
                     TraceRetry(e, _retriesToMake - retriesRemaining + 1, waitTime);
-                    Thread.Sleep(waitTime);
+                    await Task.Delay(waitTime, cancel);
 
                     retriesRemaining--;
                     baseWaitTime *= 2;
