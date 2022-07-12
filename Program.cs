@@ -32,13 +32,11 @@ namespace BuzzAPISample
             string password = ;
 
             // Create the BuzzApiClientSession
-            BuzzApiClientSession session = new(buzzServerUrl, userAgent, verbose: true);
+            BuzzApiClientSession session = new(buzzServerUrl, userAgent, userspace, username, password, verbose: true);
 
-            // Login
-            JsonNode loginResponse = await session.Login(userspace, username, password);
-            string? loginDomainId = loginResponse["user"]?["domainid"]?.ToString();
-            _ = loginDomainId ?? throw new Exception($"Unable to get the login domainId at user.domainid from: {loginResponse}"); ;
-            Console.WriteLine($"loginDomainId: {loginDomainId}");
+            // Get the signed on user (login automatically)
+            JsonNode getUserResponse = BuzzApiClientSession.VerifyResponse(await session.JsonRequest(HttpMethod.Get, "getuser2"));
+            string? domainId = getUserResponse["user"]?["domainid"]?.ToString();
 
             // Create a user
             JsonNode createUserResponse = BuzzApiClientSession.VerifyResponse(
@@ -55,7 +53,7 @@ namespace BuzzAPISample
                                     ["password"] = "password",
                                     ["firstname"] = "Test",
                                     ["lastname"] = "User",
-                                    ["domainid"] = loginDomainId
+                                    ["domainid"] = domainId
                                 }
                             }
                         }
@@ -63,7 +61,7 @@ namespace BuzzAPISample
 
             // Get the new user's ID
             string? newUserId = createUserResponse["responses"]?["response"]?[0]?["user"]?["userid"]?.ToString();
-            _ = newUserId ?? throw new Exception($"Unable to get the new user's ID at responses.response[0].user.userid from: {loginResponse}");
+            _ = newUserId ?? throw new Exception($"Unable to get the new user's ID at responses.response[0].user.userid from: {createUserResponse}");
             Console.WriteLine($"newUserId: {newUserId}");
 
             // Call GetUser2 with the user ID
@@ -106,6 +104,9 @@ namespace BuzzAPISample
                             }
                         }
                     }));
+
+            // Logout
+            await session.Logout();
         }
     }
 }

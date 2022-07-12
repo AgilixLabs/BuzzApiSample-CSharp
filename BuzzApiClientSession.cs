@@ -15,8 +15,6 @@ namespace BuzzAPISample
         private const int _initialWaitTime = 1000;
         private const int _maxRetryWaitTime = 64000;
 
-        private readonly HttpClient _httpClient;
-
         /// <summary>
         /// The URL of the server, including the protocol, and excluding trailing '/'
         /// </summary>
@@ -42,6 +40,12 @@ namespace BuzzAPISample
         /// </summary>
         public string? Token { get; private set; }
 
+        private readonly HttpClient _httpClient;
+        private readonly bool _autoLoginEnabled;
+        private readonly string _autoLoginUserspace;
+        private readonly string _autoLoginUsername;
+        private readonly string _autoLoginPassword;
+
         /// <summary>
         /// Create a BuzzApiClientSession
         /// </summary>
@@ -59,6 +63,59 @@ namespace BuzzAPISample
             _httpClient = new();
             _httpClient.DefaultRequestHeaders.Add("User-Agent", UserAgent);
             _httpClient.Timeout = TimeSpan.FromMilliseconds(Timeout);
+
+            _autoLoginEnabled = false;
+            _autoLoginUserspace = String.Empty;
+            _autoLoginUsername = String.Empty;
+            _autoLoginPassword = String.Empty;
+        }
+
+        /// <summary>
+        /// Create a BuzzApiClientSession that automatically logs in, and will re-login if the session expires
+        /// </summary>
+        /// <param name="serverUrl">The URL of the server, including the protocol, and excluding trailing '/'</param>
+        /// <param name="userAgent">The user agent to send on requests</param>
+        /// <param name="userspace">The userspace of the user to login</param>
+        /// <param name="username">The user's username</param>
+        /// <param name="password">The user's password</param>
+        /// <param name="verbose">Include verbose logging</param>
+        /// <param name="timeout">Timeout in milliseconds for requests</param>
+        public BuzzApiClientSession(string serverUrl, string userAgent, string userspace, string username, string password, 
+            bool verbose = false, int timeout = 600000)
+        {
+            if (String.IsNullOrEmpty(userspace) || String.IsNullOrEmpty(username) || String.IsNullOrEmpty(password))
+            {
+                throw new Exception("userspace, username, and password are required for auto login");
+            }
+
+            ServerUrl = serverUrl;
+            UserAgent = userAgent;
+            Verbose = verbose;
+            Timeout = timeout;
+
+            _httpClient = new();
+            _httpClient.DefaultRequestHeaders.Add("User-Agent", UserAgent);
+            _httpClient.Timeout = TimeSpan.FromMilliseconds(Timeout);
+
+            _autoLoginEnabled = true;
+            _autoLoginUserspace = userspace;
+            _autoLoginUsername = username;
+            _autoLoginPassword = password;
+        }
+
+        /// <summary>
+        /// Uses the auto login user information to call the login3 API and set the token
+        /// </summary>
+        /// <param name="cancel">Cancellation token</param>
+        /// <returns>The json returned from the login API</returns>
+        public async ValueTask<JsonNode> Login(CancellationToken cancel = default)
+        {
+            if (_autoLoginEnabled)
+            {
+                return await Login(_autoLoginUserspace, _autoLoginUsername, _autoLoginPassword, cancel);
+            }
+
+            throw new Exception("This method can only be used if the instance of BuzzApiClientSession was created with auto login");
         }
 
         /// <summary>
@@ -77,15 +134,34 @@ namespace BuzzAPISample
                     {
                         ["cmd"] = "login3",
                         ["username"] = $"{userspace}/{username}",
-                        ["password"] = password,
-                    }
+                        ["password"] = password
+                }
             };
 
             JsonNode responseJson = VerifyResponse(await JsonRequest(HttpMethod.Post, json: loginJson, includeToken: false, cancel: cancel));
 
             JsonNode? tokenNode = responseJson["user"]?["token"];
-            if (tokenNode is not null) Token = tokenNode.ToString();
+            Token = tokenNode is not null ? tokenNode.ToString() : null;
 
+            return responseJson;
+        }
+
+        /// <summary>
+        /// Calls the logout API
+        /// </summary>
+        /// <param name="cancel">Cancellation token</param>
+        /// <returns>The json returned from the logout API</returns>
+        public async ValueTask<JsonNode> Logout(CancellationToken cancel = default)
+        {
+            var loginJson = new JsonObject
+            {
+                ["request"] = new JsonObject
+                {
+                    ["cmd"] = "logout"
+                }
+            };
+
+            JsonNode responseJson = VerifyResponse(await JsonRequest(HttpMethod.Post, json: loginJson, cancel: cancel));
             return responseJson;
         }
 
@@ -139,10 +215,35 @@ namespace BuzzAPISample
         public async ValueTask<JsonNode?> JsonRequest(HttpMethod httpMethod, string? cmd = null, string? parameters = null, JsonNode? json = null,
             bool includeToken = true, CancellationToken cancel = default)
         {
+            if (_autoLoginEnabled && includeToken && Token is null)
+            {
+                if (Verbose)
+                {
+                    Log($"Attempting to login");
+                }
+                await Login(cancel);
+            }
+
             HttpContent? content = json is null ? null : new StringContent(json.ToJsonString(), Encoding.UTF8, "application/json");
             HttpResponseMessage response = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel:cancel);
             JsonNode? responseNode = JsonNode.Parse(await response.Content.ReadAsStreamAsync(cancel));
             TraceResponse(responseNode);
+
+            // If the token expired, attempt to login and retry the request
+            if (_autoLoginEnabled &&
+                includeToken && 
+                Token is not null && 
+                responseNode?["response"]?["code"]?.ToString() == "NoAuthentication")
+            {
+                if (Verbose)
+                {
+                    Log($"Attempting to re-login because the request returned code \"NoAuthentication\"");
+                }
+                await Login(cancel);
+                response = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
+                responseNode = JsonNode.Parse(await response.Content.ReadAsStreamAsync(cancel));
+                TraceResponse(responseNode);
+            }
             return responseNode;
         }
 
