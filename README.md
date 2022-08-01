@@ -9,13 +9,13 @@ accept JSON or XML, and responses can also be in either JSON or XML. A typical
 workflow for a Buzz API consumer is to login and perform some actions.
 
 BuzzApiSample:
-1. Configures an instance of BuzzApiClient with a buzz server, and a signon user.
+1. Configures an instance of BuzzApiClient with a Buzz server, and a signon user.
 2. Determines the domain of the current user by calling GetUser2
-3. Creates a new user in the same domain of the current user by calling CreateUsers
+3. Creates a new user in the same domain as the signon user by calling CreateUsers
 4. Gets the new user by calling GetUser2
 5. Updates the new user by calling UpdateUsers
 6. Gets the updated user by calling GetUser2
-7. Deletes the new and updates user by calling DeleteUsers
+7. Deletes the new and updated user by calling DeleteUsers
 
 BuzzApiClient makes calling the Buzz API simpler by:
 - Managing the user session. BuzzApiClient automatically logs in when necessary, including
