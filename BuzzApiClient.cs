@@ -9,7 +9,7 @@ namespace BuzzAPISample
     /// <summary>
     /// Makes requests to a Buzz API server.
     /// </summary>
-    public class BuzzApiClientSession
+    public class BuzzApiClient
     {
         private const int _retriesToMake = 5;
         private const int _initialWaitTime = 1000;
@@ -47,13 +47,13 @@ namespace BuzzAPISample
         private readonly string _autoLoginPassword;
 
         /// <summary>
-        /// Create a BuzzApiClientSession
+        /// Create a BuzzApiClient
         /// </summary>
         /// <param name="serverUrl">The URL of the server, including the protocol, and excluding trailing '/'</param>
         /// <param name="userAgent">The user agent to send on requests</param>
         /// <param name="verbose">Include verbose logging</param>
         /// <param name="timeout">Timeout in milliseconds for requests</param>
-        public BuzzApiClientSession(string serverUrl, string userAgent, bool verbose = false, int timeout = 600000)
+        public BuzzApiClient(string serverUrl, string userAgent, bool verbose = false, int timeout = 600000)
         {
             ServerUrl = serverUrl;
             UserAgent = userAgent;
@@ -71,7 +71,7 @@ namespace BuzzAPISample
         }
 
         /// <summary>
-        /// Create a BuzzApiClientSession that automatically logs in, and will re-login if the session expires
+        /// Create a BuzzApiClient that automatically logs in, and will re-login if the current session expires
         /// </summary>
         /// <param name="serverUrl">The URL of the server, including the protocol, and excluding trailing '/'</param>
         /// <param name="userAgent">The user agent to send on requests</param>
@@ -80,7 +80,7 @@ namespace BuzzAPISample
         /// <param name="password">The user's password</param>
         /// <param name="verbose">Include verbose logging</param>
         /// <param name="timeout">Timeout in milliseconds for requests</param>
-        public BuzzApiClientSession(string serverUrl, string userAgent, string userspace, string username, string password, 
+        public BuzzApiClient(string serverUrl, string userAgent, string userspace, string username, string password, 
             bool verbose = false, int timeout = 600000)
         {
             if (String.IsNullOrEmpty(userspace) || String.IsNullOrEmpty(username) || String.IsNullOrEmpty(password))
@@ -115,7 +115,7 @@ namespace BuzzAPISample
                 return await Login(_autoLoginUserspace, _autoLoginUsername, _autoLoginPassword, cancel);
             }
 
-            throw new Exception("This method can only be used if the instance of BuzzApiClientSession was created with auto login");
+            throw new Exception("This method can only be used if the instance of BuzzApiClient was created with auto login");
         }
 
         /// <summary>
@@ -143,25 +143,6 @@ namespace BuzzAPISample
             JsonNode? tokenNode = responseJson["user"]?["token"];
             Token = tokenNode is not null ? tokenNode.ToString() : null;
 
-            return responseJson;
-        }
-
-        /// <summary>
-        /// Calls the logout API
-        /// </summary>
-        /// <param name="cancel">Cancellation token</param>
-        /// <returns>The json returned from the logout API</returns>
-        public async ValueTask<JsonNode> Logout(CancellationToken cancel = default)
-        {
-            var loginJson = new JsonObject
-            {
-                ["request"] = new JsonObject
-                {
-                    ["cmd"] = "logout"
-                }
-            };
-
-            JsonNode responseJson = VerifyResponse(await JsonRequest(HttpMethod.Post, json: loginJson, cancel: cancel));
             return responseJson;
         }
 

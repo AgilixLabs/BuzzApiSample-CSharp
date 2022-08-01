@@ -31,16 +31,16 @@ namespace BuzzAPISample
             string username = ;
             string password = ;
 
-            // Create the BuzzApiClientSession
-            BuzzApiClientSession session = new(buzzServerUrl, userAgent, userspace, username, password, verbose: true);
+            // Create the BuzzApiClient
+            BuzzApiClient client = new(buzzServerUrl, userAgent, userspace, username, password, verbose: true);
 
             // Get the signed on user (login automatically)
-            JsonNode getUserResponse = BuzzApiClientSession.VerifyResponse(await session.JsonRequest(HttpMethod.Get, "getuser2"));
+            JsonNode getUserResponse = BuzzApiClient.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2"));
             string? domainId = getUserResponse["user"]?["domainid"]?.ToString();
 
             // Create a user
-            JsonNode createUserResponse = BuzzApiClientSession.VerifyResponse(
-                await session.JsonRequest(HttpMethod.Post, "createusers",
+            JsonNode createUserResponse = BuzzApiClient.VerifyResponse(
+                await client.JsonRequest(HttpMethod.Post, "createusers",
                     json: new JsonObject
                     {
                         ["requests"] = new JsonObject
@@ -65,11 +65,11 @@ namespace BuzzAPISample
             Console.WriteLine($"newUserId: {newUserId}");
 
             // Call GetUser2 with the user ID
-            BuzzApiClientSession.VerifyResponse(await session.JsonRequest(HttpMethod.Get, "getuser2", $"userid={newUserId}"));
+            BuzzApiClient.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2", $"userid={newUserId}"));
 
             // Update the user to have an email address
-            BuzzApiClientSession.VerifyResponse(
-                await session.JsonRequest(HttpMethod.Post, "updateusers", json:
+            BuzzApiClient.VerifyResponse(
+                await client.JsonRequest(HttpMethod.Post, "updateusers", json:
                     new JsonObject
                     {
                         ["requests"] = new JsonObject
@@ -86,11 +86,11 @@ namespace BuzzAPISample
                     }));
 
             // Call GetUser2 to see the user with the email address
-            BuzzApiClientSession.VerifyResponse(await session.JsonRequest(HttpMethod.Get, "getuser2", $"userid={newUserId}"));
+            BuzzApiClient.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2", $"userid={newUserId}"));
 
             // Delete the user
-            BuzzApiClientSession.VerifyResponse(
-                await session.JsonRequest(HttpMethod.Post, "deleteusers", json:
+            BuzzApiClient.VerifyResponse(
+                await client.JsonRequest(HttpMethod.Post, "deleteusers", json:
                     new JsonObject
                     {
                         ["requests"] = new JsonObject
@@ -104,9 +104,6 @@ namespace BuzzAPISample
                             }
                         }
                     }));
-
-            // Logout
-            await session.Logout();
         }
     }
 }
