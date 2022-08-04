@@ -10,12 +10,12 @@ workflow for a Buzz API consumer is to login and perform some actions.
 
 BuzzApiSample:
 1. Configures an instance of BuzzApiClient with a Buzz server, and a signon user.
-2. Determines the domain of the current user by calling GetUser2
-3. Creates a new user in the same domain as the signon user by calling CreateUsers
-4. Gets the new user by calling GetUser2
-5. Updates the new user by calling UpdateUsers
-6. Gets the updated user by calling GetUser2
-7. Deletes the new and updated user by calling DeleteUsers
+2. Calls GetUser2 to obtain user information for the signon user
+3. Calls CreateUsers to create a new user in the same domain as the signon user
+4. Calls GetUser2 to obtain user information about the new user
+5. Calls UpdateUsers to update the new user's email address
+6. Calls GetUser2 to obtain user information about the updated user
+7. Calls DeleteUsers to delete the new user
 
 BuzzApiClient makes calling the Buzz API simpler by:
 - Managing the user session. BuzzApiClient automatically logs in when necessary, including
