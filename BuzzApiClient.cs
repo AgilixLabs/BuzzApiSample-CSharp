@@ -327,7 +327,6 @@ namespace BuzzAPISample
                     HttpStatusCode.FailedDependency or 
                     HttpStatusCode.UpgradeRequired or 
                     HttpStatusCode.PreconditionRequired or 
-                    HttpStatusCode.TooManyRequests or 
                     HttpStatusCode.RequestHeaderFieldsTooLarge or 
                     HttpStatusCode.UnavailableForLegalReasons 
                         => false,
