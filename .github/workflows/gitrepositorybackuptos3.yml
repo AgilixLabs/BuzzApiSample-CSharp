@@ -1,0 +1,22 @@
+name: Git Repository Backup to S3
+on:
+  push:
+     branches: '**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.S3BACKUPKEY2023 }}
+          aws-secret-access-key: ${{ secrets.S3BACKUPKEYVALUE2023 }}
+          aws-region: us-east-1
+      - name: Create Bundle
+        run: |
+         git bundle create ${{github.event.repository.name}}.bundle --all
+      - name: Backup to S3
+        run: |
+          aws s3 cp ${{github.event.repository.name}}.bundle s3://agilix-e1-mt/github/ --sse --storage-class STANDARD_IA
