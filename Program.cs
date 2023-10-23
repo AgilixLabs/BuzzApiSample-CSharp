@@ -1,4 +1,4 @@
-﻿
+﻿using Microsoft.Extensions.Logging;
 using System.Text.Json.Nodes;
 
 namespace BuzzAPISample
@@ -31,15 +31,20 @@ namespace BuzzAPISample
             string username = ;
             string password = ;
 
+            // Create a console logger (change this and change assembly dependencies to send logs somewhere else)
+            using ILoggerFactory loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+            ILogger<BuzzApiClient> logger = loggerFactory.CreateLogger<BuzzApiClient>();
+
             // Create the BuzzApiClient
-            BuzzApiClient client = new(buzzServerUrl, userAgent, userspace, username, password, verbose: true);
+            BuzzApiClient client = new(logger, buzzServerUrl, userAgent, verbose: true);
 
             // Get the signed on user (login automatically)
-            JsonNode getUserResponse = BuzzApiClient.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2"));
+            JsonNode getUserResponse = client.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2"));
             string? domainId = getUserResponse["user"]?["domainid"]?.ToString();
+            logger.LogInformation($"loginDomainId: {domainId}");
 
             // Create a user
-            JsonNode createUserResponse = BuzzApiClient.VerifyResponse(
+            JsonNode createUserResponse = client.VerifyResponse(
                 await client.JsonRequest(HttpMethod.Post, "createusers",
                     json: new JsonObject
                     {
@@ -62,13 +67,13 @@ namespace BuzzAPISample
             // Get the new user's ID
             string? newUserId = createUserResponse["responses"]?["response"]?[0]?["user"]?["userid"]?.ToString();
             _ = newUserId ?? throw new Exception($"Unable to get the new user's ID at responses.response[0].user.userid from: {createUserResponse}");
-            Console.WriteLine($"newUserId: {newUserId}");
+            logger.LogInformation($"newUserId: {newUserId}");
 
             // Call GetUser2 with the user ID
-            BuzzApiClient.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2", $"userid={newUserId}"));
+            client.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2", $"userid={newUserId}"));
 
             // Update the user to have an email address
-            BuzzApiClient.VerifyResponse(
+            client.VerifyResponse(
                 await client.JsonRequest(HttpMethod.Post, "updateusers", json:
                     new JsonObject
                     {
@@ -86,10 +91,10 @@ namespace BuzzAPISample
                     }));
 
             // Call GetUser2 to see the user with the email address
-            BuzzApiClient.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2", $"userid={newUserId}"));
+            client.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2", $"userid={newUserId}"));
 
             // Delete the user
-            BuzzApiClient.VerifyResponse(
+            client.VerifyResponse(
                 await client.JsonRequest(HttpMethod.Post, "deleteusers", json:
                     new JsonObject
                     {
