@@ -16,7 +16,7 @@ namespace BuzzAPISample
              *    If you're running the sample, you could use "BuzzAPISample"
              *      string applicationInformation = "BuzzAPISample";
              * 3. Configure buzzServerUrl, userspace, username, and password for your Buzz environment.
-             *    buzzServerUrl is typically "https://api.agilixbuzz.com"
+             *    buzzServerUrl is typically "https://background.api.agilixbuzz.com"  (see https://api.agilixbuzz.com/docs/#!/Concept/ApiTimeLimiting)
              *    userspace is the userspace of the domain where the login user resides
              *    username and password are the username and password of the login user
              */
@@ -26,7 +26,7 @@ namespace BuzzAPISample
             string userAgent = $"BuzzApiClient/1.0.0 (CSharp; {applicationInformation}; {contactInformation})";
 
             // Update these for your environment. Contact Agilix support if you need help.
-            string buzzServerUrl = ;
+            string buzzServerUrl = "https://backoff-test.agilixbuzz.com";   // (see https://api.agilixbuzz.com/docs/#!/Concept/ApiTimeLimiting)
             string userspace = ;
             string username = ;
             string password = ;
