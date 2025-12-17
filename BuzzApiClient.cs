@@ -1,4 +1,4 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -14,6 +14,11 @@ namespace BuzzAPISample
         private const int _retriesToMake = 5;
         private const int _initialWaitTime = 1000;
         private const int _maxRetryWaitTime = 64000;
+
+        /// <summary>
+        /// The <see cref="ILogger{TCategoryName}"/> instance to use for logging for this instance.
+        /// </summary>
+        private readonly ILogger<BuzzApiClient>? _logger;
 
         /// <summary>
         /// The URL of the server, including the protocol, and excluding trailing '/'
@@ -49,12 +54,15 @@ namespace BuzzAPISample
         /// <summary>
         /// Create a BuzzApiClient
         /// </summary>
+        /// <param name="logger">An <see cref="ILogger{TCategoryName}"/> to use for logging.</param>
         /// <param name="serverUrl">The URL of the server, including the protocol, and excluding trailing '/'</param>
         /// <param name="userAgent">The user agent to send on requests</param>
         /// <param name="verbose">Include verbose logging</param>
         /// <param name="timeout">Timeout in milliseconds for requests</param>
-        public BuzzApiClient(string serverUrl, string userAgent, bool verbose = false, int timeout = 600000)
+        public BuzzApiClient(ILogger<BuzzApiClient>? logger, string serverUrl, string userAgent, bool verbose = false, int timeout = 600000)
         {
+            _logger = logger;
+
             ServerUrl = serverUrl;
             UserAgent = userAgent;
             Verbose = verbose;
@@ -152,9 +160,13 @@ namespace BuzzAPISample
         /// <param name="responseJson">The json to verify</param>
         /// <param name="checkChildResponses">If VerifyResponse should check child responses. These are returned in APIs that can do multiple things, like CreateUsers which can make multiple users.</param>
         /// <returns>Verified and non-null json</returns>
-        public static JsonNode VerifyResponse(JsonNode? responseJson, bool checkChildResponses = true)
+        public JsonNode VerifyResponse(JsonNode? responseJson, bool checkChildResponses = true)
         {
-            _ = responseJson ?? throw new ArgumentException($"Buzz API call failed. Expected response.code to be OK, found: null");
+            if (responseJson == null)
+            {
+                _logger?.LogError("Buzz API call failed. Expected response.code to be OK, found: null");
+                throw new ArgumentException("Buzz API call failed. Expected response.code to be OK, found: null");
+            }
 
             JsonNode jsonToVerify = responseJson;
             JsonNode? childResponse = responseJson["response"];
@@ -166,6 +178,7 @@ namespace BuzzAPISample
             if (jsonToVerify["code"]?.ToString() != "OK")
             {
                 string responseText = responseJson?.ToString() ?? "";
+                _logger?.LogError("Buzz API call failed. Expected response.code to be OK, found: {ResponseText}", responseText);
                 throw new Exception($"Buzz API call failed. Expected response.code to be OK, found: {responseText}");
             }
 
@@ -198,10 +211,7 @@ namespace BuzzAPISample
         {
             if (_autoLoginEnabled && includeToken && Token is null)
             {
-                if (Verbose)
-                {
-                    Log($"Attempting to login");
-                }
+                _logger?.LogInformation($"Attempting to login");
                 await Login(cancel);
             }
 
@@ -216,10 +226,7 @@ namespace BuzzAPISample
                 Token is not null && 
                 responseNode?["response"]?["code"]?.ToString() == "NoAuthentication")
             {
-                if (Verbose)
-                {
-                    Log($"Attempting to re-login because the request returned code \"NoAuthentication\"");
-                }
+                _logger?.LogTrace($"Attempting to re-login because the request returned code \"NoAuthentication\"");
                 await Login(cancel);
                 response = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
                 responseNode = JsonNode.Parse(await response.Content.ReadAsStreamAsync(cancel));
@@ -262,32 +269,30 @@ namespace BuzzAPISample
                     response.EnsureSuccessStatusCode();
                     if (response.Headers.RetryAfter is not null)
                     {
-                        throw new HttpRequestException("Request failed because it had a retry-after header", null, response.StatusCode);
+                        _logger?.LogError("Request failed because it had a Retry-After header");
+                        throw new HttpRequestException("Request failed because it had a Retry-After header", null, response.StatusCode);
                     }
                     return response;
                 }
-                catch (Exception e)
+                // catch exceptions here but only if there are retries remaining and the exception is one that allows retries
+                catch (Exception e) when (retriesRemaining > 0 && (e is not HttpRequestException requestException || DoesStatusCodeAllowRetry(requestException.StatusCode)))
                 {
-                    if (retriesRemaining <= 0 || 
-                        (e is HttpRequestException requestException && 
-                            !DoesStatusCodeAllowRetry(requestException.StatusCode)))
-                    {
-                        throw;
-                    }
-
-                    int waitTime = GetRetryWaitTime(baseWaitTime, retryHeader);
+                    _logger?.LogTrace("Retryable exception invoking {Command} with {Method}: {ErrorType}, {ErrorMessage}", cmd, httpMethod, e.GetType(), e.Message);
+                    // decide how long to wait before retrying based on any headers given by the server or if that's not there, the current base wait time
+                    int waitTime = GetRetryWaitTime(retryHeader, baseWaitTime);
                     TraceRetry(e, _retriesToMake - retriesRemaining + 1, waitTime);
                     await Task.Delay(waitTime, cancel);
 
                     retriesRemaining--;
-                    baseWaitTime *= 2;
+                    baseWaitTime *= 2;  // wait for twice as long with each subsequent attempt, ie. exponential back-off
                 }
             }
         }
 
-        private static int GetRetryWaitTime(int baseWaitTime, RetryConditionHeaderValue? retryHeader)
+        private static int GetRetryWaitTime(RetryConditionHeaderValue? retryHeader, int baseWaitTime)
         {
             int actualWaitTime = baseWaitTime;
+            // if a Retry-After header was specified in the response, use that to determine how long we wait
             if (retryHeader is not null)
             {
                 if (retryHeader.Delta is not null)
@@ -299,7 +304,10 @@ namespace BuzzAPISample
                     actualWaitTime = Math.Max(actualWaitTime, (int)(DateTime.UtcNow - retryHeader.Date.Value).TotalMilliseconds);
                 }
             }
-            actualWaitTime += Math.Min(_maxRetryWaitTime, actualWaitTime + (new Random()).Next(1, 1000));
+            else // if there is no Retry-After, use the base time plus a random time (the random time prevents clients using the same algorithm from unintentionally hitting the system rhythmically, causing further problems)
+            {
+                actualWaitTime = Math.Min(_maxRetryWaitTime, actualWaitTime + (new Random()).Next(1, 1000));
+            }
             return actualWaitTime;
         }
 
@@ -344,46 +352,31 @@ namespace BuzzAPISample
             };
         }
 
-        private static void Log(string logString)
+        private void TraceRetry(Exception e, int attempt, int waitTimeMs)
         {
-            Console.WriteLine(logString);
-        }
-
-        private void TraceRetry(Exception e, int attempt, int waitTime)
-        {
-            if (Verbose)
-            {
-                Log($"Will make request retry #{attempt} after {waitTime}ms because of error: {e.Message}");
-            }
+            // NOTE: see https://learn.microsoft.com/en-us/dotnet/core/extensions/logging?tabs=command-line#log-message-template-formatting
+            _logger?.LogDebug("Will make request retry #{Attempt} after {WaitTimeMs}ms because of error: {ErrorMessage}", attempt, waitTimeMs, e.Message);
         }
 
         private void TraceRequest(string requestUri, HttpContent? content)
         {
-            if (Verbose)
+            _logger?.LogInformation("Request: {RequestUri}", requestUri);
+            if (content is not null && content is StringContent)
             {
-                Log($"Request: {requestUri}");
-                if (content is not null && content is StringContent)
-                {
-                    string text = content.ReadAsStringAsync().Result;
-                    Log("Request content:");
-                    Log(text[..Math.Min(text.Length, 1000)]);
-                }
+                string text = content.ReadAsStringAsync().Result;
+                _logger?.LogDebug("Request content: {Content}", text[..Math.Min(text.Length, 1000)]);
             }
         }
 
         private void TraceResponse(JsonNode? json)
         {
-            if (Verbose)
+            if (json is not null)
             {
-                if (json is not null)
-                {
-                    Log("Response with json content:");
-                    Log(json.ToString());
-                }
-                else
-                {
-                    Log("Response was empty or not json");
-                }
+                _logger?.LogDebug("Response with json content: {Content}", json.ToString());
+            }
+            else
+            {
+                _logger?.LogDebug("Response was empty or not json");
             }
         }
     }
