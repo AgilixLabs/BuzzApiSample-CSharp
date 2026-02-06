@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -12,8 +12,8 @@ namespace BuzzAPISample
     public class BuzzApiClient
     {
         private const int _retriesToMake = 5;
-        private const int _initialWaitTime = 1000;
-        private const int _maxRetryWaitTime = 64000;
+        private static readonly TimeSpan _initialWaitDuration = TimeSpan.FromMilliseconds(1000);
+        private static readonly TimeSpan _maxRetryWaitDuration = TimeSpan.FromMilliseconds(64000);
 
         /// <summary>
         /// The <see cref="ILogger{TCategoryName}"/> instance to use for logging for this instance.
@@ -73,9 +73,9 @@ namespace BuzzAPISample
             _httpClient.Timeout = TimeSpan.FromMilliseconds(Timeout);
 
             _autoLoginEnabled = false;
-            _autoLoginUserspace = String.Empty;
-            _autoLoginUsername = String.Empty;
-            _autoLoginPassword = String.Empty;
+            _autoLoginUserspace = string.Empty;
+            _autoLoginUsername = string.Empty;
+            _autoLoginPassword = string.Empty;
         }
 
         /// <summary>
@@ -91,7 +91,7 @@ namespace BuzzAPISample
         public BuzzApiClient(string serverUrl, string userAgent, string userspace, string username, string password, 
             bool verbose = false, int timeout = 600000)
         {
-            if (String.IsNullOrEmpty(userspace) || String.IsNullOrEmpty(username) || String.IsNullOrEmpty(password))
+            if (string.IsNullOrEmpty(userspace) || string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {
                 throw new Exception("userspace, username, and password are required for auto login");
             }
@@ -149,7 +149,7 @@ namespace BuzzAPISample
             JsonNode responseJson = VerifyResponse(await JsonRequest(HttpMethod.Post, json: loginJson, includeToken: false, cancel: cancel));
 
             JsonNode? tokenNode = responseJson["user"]?["token"];
-            Token = tokenNode is not null ? tokenNode.ToString() : null;
+            Token = tokenNode?.ToString();
 
             return responseJson;
         }
@@ -245,11 +245,12 @@ namespace BuzzAPISample
             string requestUri = ServerUrl + "/cmd" + (cmd is not null ? $"/{cmd}" : "") + (parameters is not null ? $"?{parameters}" : "");
 
             int retriesRemaining = _retriesToMake;
-            int baseWaitTime = _initialWaitTime;
+            TimeSpan baseWaitDuration = _initialWaitDuration;
 
             while (true)
             {
                 RetryConditionHeaderValue? retryHeader = null;
+                HttpResponseMessage? response = null;
                 try
                 {
                     HttpRequestMessage httpRequestMessage = new(httpMethod, requestUri);
@@ -257,58 +258,109 @@ namespace BuzzAPISample
                     {
                         httpRequestMessage.Content = content;
                     }
-                    if (!String.IsNullOrEmpty(acceptsContentType))
+                    if (!string.IsNullOrEmpty(acceptsContentType))
                     {
                         httpRequestMessage.Headers.Accept.Add(new(acceptsContentType));
                     }
 
                     TraceRequest(requestUri, content);
 
-                    HttpResponseMessage? response = await _httpClient.SendAsync(httpRequestMessage, cancel);
+                    response = await _httpClient.SendAsync(httpRequestMessage, cancel);
                     retryHeader = response.Headers.RetryAfter;
-                    response.EnsureSuccessStatusCode();
-                    if (response.Headers.RetryAfter is not null)
+
+                    // API Time/Rate Limiting: 429 Too Many Requests (and 503 Service Unavailable) with Retry-After / X-RateLimit-* headers
+                    if ((response.StatusCode == HttpStatusCode.TooManyRequests || response.StatusCode == HttpStatusCode.ServiceUnavailable) && retriesRemaining > 0)
                     {
-                        _logger?.LogError("Request failed because it had a Retry-After header");
-                        throw new HttpRequestException("Request failed because it had a Retry-After header", null, response.StatusCode);
+                        TimeSpan waitDuration = GetRetryWaitDurationFromResponse(response, retryHeader, baseWaitDuration);
+                        _logger?.LogWarning("Request rate/time limited. StatusCode: {StatusCode}, backing off for {WaitTimeMs} milliseconds (Retry-After or X-RateLimit-Reset), retries remaining: {RetriesRemaining}",
+                            response.StatusCode, (int)waitDuration.TotalMilliseconds, retriesRemaining);
+                        TraceRetry(new HttpRequestException($"Server returned {response.StatusCode}.", null, response.StatusCode), _retriesToMake - retriesRemaining + 1, waitDuration);
+                        response.Dispose();
+                        await Task.Delay(waitDuration, cancel);
+                        retriesRemaining--;
+                        baseWaitDuration = TimeSpan.FromMilliseconds(baseWaitDuration.TotalMilliseconds * 2);
+                        continue;
                     }
+
+                    if (response.StatusCode == HttpStatusCode.TooManyRequests || response.StatusCode == HttpStatusCode.ServiceUnavailable)
+                    {
+                        var statusCode = response.StatusCode;
+                        response.Dispose();
+                        throw new HttpRequestException($"Server returned {statusCode} (rate/time limited). No retries remaining.", null, statusCode);
+                    }
+                    response.EnsureSuccessStatusCode();
                     return response;
                 }
                 // catch exceptions here but only if there are retries remaining and the exception is one that allows retries
                 catch (Exception e) when (retriesRemaining > 0 && (e is not HttpRequestException requestException || DoesStatusCodeAllowRetry(requestException.StatusCode)))
                 {
+                    response?.Dispose();
                     _logger?.LogTrace("Retryable exception invoking {Command} with {Method}: {ErrorType}, {ErrorMessage}", cmd, httpMethod, e.GetType(), e.Message);
-                    // decide how long to wait before retrying based on any headers given by the server or if that's not there, the current base wait time
-                    int waitTime = GetRetryWaitTime(retryHeader, baseWaitTime);
-                    TraceRetry(e, _retriesToMake - retriesRemaining + 1, waitTime);
-                    await Task.Delay(waitTime, cancel);
+                    // decide how long to wait before retrying based on any headers given by the server or if that's not there, the current base wait duration
+                    TimeSpan waitDuration = GetRetryWaitDuration(retryHeader, baseWaitDuration);
+                    TraceRetry(e, _retriesToMake - retriesRemaining + 1, waitDuration);
+                    await Task.Delay(waitDuration, cancel);
 
                     retriesRemaining--;
-                    baseWaitTime *= 2;  // wait for twice as long with each subsequent attempt, ie. exponential back-off
+                    baseWaitDuration = TimeSpan.FromMilliseconds(baseWaitDuration.TotalMilliseconds * 2);  // exponential back-off
+                }
+                finally
+                {
+                    response?.Dispose();
                 }
             }
         }
 
-        private static int GetRetryWaitTime(RetryConditionHeaderValue? retryHeader, int baseWaitTime)
+        /// <summary>
+        /// Computes backoff wait duration from API rate/time limiting response headers.
+        /// Uses Retry-After first; if missing, uses X-RateLimit-Reset (seconds until window resets) per API docs.
+        /// </summary>
+        /// <returns>Duration to wait before retrying.</returns>
+        private static TimeSpan GetRetryWaitDurationFromResponse(HttpResponseMessage response, RetryConditionHeaderValue? retryHeader, TimeSpan baseWaitDuration)
         {
-            int actualWaitTime = baseWaitTime;
-            // if a Retry-After header was specified in the response, use that to determine how long we wait
+            int waitFromRetryAfterMs = 0;
             if (retryHeader is not null)
             {
                 if (retryHeader.Delta is not null)
-                {
-                    actualWaitTime = Math.Max(actualWaitTime, (int)retryHeader.Delta.Value.TotalMilliseconds);
-                }
+                    waitFromRetryAfterMs = (int)retryHeader.Delta.Value.TotalMilliseconds;
                 else if (retryHeader.Date is not null)
-                {
-                    actualWaitTime = Math.Max(actualWaitTime, (int)(DateTime.UtcNow - retryHeader.Date.Value).TotalMilliseconds);
-                }
+                    waitFromRetryAfterMs = Math.Max(0, (int)(retryHeader.Date.Value - DateTime.UtcNow).TotalMilliseconds);
             }
-            else // if there is no Retry-After, use the base time plus a random time (the random time prevents clients using the same algorithm from unintentionally hitting the system rhythmically, causing further problems)
+            if (waitFromRetryAfterMs > 0)
             {
-                actualWaitTime = Math.Min(_maxRetryWaitTime, actualWaitTime + (new Random()).Next(1, 1000));
+                int cappedMs = Math.Max((int)baseWaitDuration.TotalMilliseconds, Math.Min((int)_maxRetryWaitDuration.TotalMilliseconds, waitFromRetryAfterMs));
+                return TimeSpan.FromMilliseconds(cappedMs);
             }
-            return actualWaitTime;
+
+            // X-RateLimit-Reset: seconds until the rate limit window ends (API Rate Limiting / Time Limiting docs)
+            if (response.Headers.TryGetValues("X-RateLimit-Reset", out var resetValues) && resetValues.FirstOrDefault() is string resetSecsStr && int.TryParse(resetSecsStr, out int resetSecs) && resetSecs > 0)
+            {
+                int waitFromResetMs = resetSecs * 1000;
+                int cappedMs = Math.Max((int)baseWaitDuration.TotalMilliseconds, Math.Min((int)_maxRetryWaitDuration.TotalMilliseconds, waitFromResetMs));
+                return TimeSpan.FromMilliseconds(cappedMs);
+            }
+            int fallbackMs = Math.Min((int)_maxRetryWaitDuration.TotalMilliseconds, (int)baseWaitDuration.TotalMilliseconds + Random.Shared.Next(1, 1000));
+            return TimeSpan.FromMilliseconds(fallbackMs);
+        }
+
+        /// <summary>
+        /// Computes backoff wait duration from Retry-After header or exponential backoff.
+        /// </summary>
+        /// <returns>Duration to wait before retrying.</returns>
+        private static TimeSpan GetRetryWaitDuration(RetryConditionHeaderValue? retryHeader, TimeSpan baseWaitDuration)
+        {
+            double baseMs = baseWaitDuration.TotalMilliseconds;
+            double actualMs = baseMs;
+            if (retryHeader is not null)
+            {
+                if (retryHeader.Delta is not null)
+                    actualMs = Math.Max(actualMs, retryHeader.Delta.Value.TotalMilliseconds);
+                else if (retryHeader.Date is not null)
+                    actualMs = Math.Max(actualMs, (retryHeader.Date.Value - DateTime.UtcNow).TotalMilliseconds);
+            }
+            else
+                actualMs = Math.Min(_maxRetryWaitDuration.TotalMilliseconds, actualMs + Random.Shared.Next(1, 1000));
+            return TimeSpan.FromMilliseconds(Math.Min(_maxRetryWaitDuration.TotalMilliseconds, actualMs));
         }
 
         private static bool DoesStatusCodeAllowRetry(HttpStatusCode? statusCode)
@@ -352,10 +404,10 @@ namespace BuzzAPISample
             };
         }
 
-        private void TraceRetry(Exception e, int attempt, int waitTimeMs)
+        private void TraceRetry(Exception e, int attempt, TimeSpan waitDuration)
         {
-            // NOTE: see https://learn.microsoft.com/en-us/dotnet/core/extensions/logging?tabs=command-line#log-message-template-formatting
-            _logger?.LogDebug("Will make request retry #{Attempt} after {WaitTimeMs}ms because of error: {ErrorMessage}", attempt, waitTimeMs, e.Message);
+            int waitMs = (int)waitDuration.TotalMilliseconds;
+            _logger?.LogDebug("Will make request retry #{Attempt} after {WaitTimeMs} milliseconds because of error: {ErrorMessage}", attempt, waitMs, e.Message);
         }
 
         private void TraceRequest(string requestUri, HttpContent? content)
