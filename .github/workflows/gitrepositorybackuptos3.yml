@@ -1,5 +1,5 @@
 name: Git Repository Backup to S3
-run-name: Backup ${{ github.event.repository.name }} @ ${{ github.ref_name }} # ${{ github.sha }}
+run-name: Backup ${{ github.repository }} (${{ github.sha || github.event.after || github.event.head_commit.id || 'no-sha' }}) to S3
 
 on:
   push:
