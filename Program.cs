@@ -26,7 +26,7 @@ namespace BuzzAPISample
             string userAgent = $"BuzzApiClient/1.0.0 (CSharp; {applicationInformation}; {contactInformation})";
 
             // Update these for your environment. Contact Agilix support if you need help.
-            string buzzServerUrl = "https://backoff-test.agilixbuzz.com";   // (see https://api.agilixbuzz.com/docs/#!/Concept/ApiTimeLimiting)
+            string buzzServerUrl = "https://backoff-test.api.agilixbuzz.com";   // (see https://api.agilixbuzz.com/docs/#!/Concept/ApiTimeLimiting)
             string userspace = ;
             string username = ;
             string password = ;
