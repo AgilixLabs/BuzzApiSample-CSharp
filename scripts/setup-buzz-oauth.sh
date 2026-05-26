@@ -150,12 +150,25 @@ prompt_optional() {
     printf -v "$var_name" '%s' "$value"
 }
 
-# Read a password silently (standard Unix behaviour: nothing is shown while typing)
+# Read a password with * masking, one character at a time.
+# Handles backspace/delete to erase the last character.
 prompt_password() {
     local label="$1" var_name="$2"
-    printf '%s (nothing will be shown): ' "$label"
-    local value=""
-    read -r -s value
+    local value="" char
+    printf '%s: ' "$label"
+    while IFS= read -r -s -n1 char; do
+        if [ -z "$char" ]; then
+            break  # Enter
+        elif [ "$char" = $'\x7f' ] || [ "$char" = $'\x08' ]; then
+            if [ -n "$value" ]; then
+                value="${value%?}"
+                printf '\b \b'
+            fi
+        else
+            value="${value}${char}"
+            printf '*'
+        fi
+    done
     printf '\n'
     printf -v "$var_name" '%s' "$value"
 }

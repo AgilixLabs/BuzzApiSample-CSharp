@@ -139,6 +139,28 @@ if result:
 PYEOF
 }
 
+# Read a password with * masking, one character at a time.
+prompt_password() {
+    local label="$1" var_name="$2"
+    local value="" char
+    printf '%s: ' "$label"
+    while IFS= read -r -s -n1 char; do
+        if [ -z "$char" ]; then
+            break  # Enter
+        elif [ "$char" = $'\x7f' ] || [ "$char" = $'\x08' ]; then
+            if [ -n "$value" ]; then
+                value="${value%?}"
+                printf '\b \b'
+            fi
+        else
+            value="${value}${char}"
+            printf '*'
+        fi
+    done
+    printf '\n'
+    printf -v "$var_name" '%s' "$value"
+}
+
 # ── Load config ───────────────────────────────────────────────────────────────
 if [ ! -f "$CONFIG_FILE" ]; then
     printf 'buzz-config.json not found — nothing to clean up.\n'
@@ -205,9 +227,7 @@ while [ -z "$ADMIN_TOKEN" ]; do
         printf '  Username must be in userspace/username format.\n'
     done
 
-    printf 'Admin password (nothing will be shown): '
-    read -rs ADMIN_PASSWORD
-    printf '\n'
+    prompt_password "Admin password" ADMIN_PASSWORD
 
     printf 'Logging in...'
 
