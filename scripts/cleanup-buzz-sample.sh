@@ -141,20 +141,24 @@ printf '\n── Admin login ─────────────────
 printf 'Enter credentials for a Buzz admin account with rights to\n'
 printf 'delete users and manage keys on account %s.\n\n' "$OAUTH_USER_ID"
 
-while true; do
-    printf 'Admin username (userspace/username, e.g. myschool/admin): '
-    read -r ADMIN_USERNAME
-    if printf '%s' "$ADMIN_USERNAME" | grep -qE '^[^/]+/[^/]+$'; then
-        break
-    fi
-    printf '  Username must be in userspace/username format.\n'
-done
+ADMIN_TOKEN=""
+while [ -z "$ADMIN_TOKEN" ]; do
+    while true; do
+        printf 'Admin username (userspace/username, e.g. myschool/admin): '
+        read -r ADMIN_USERNAME
+        if printf '%s' "$ADMIN_USERNAME" | grep -qE '^[^/]+/[^/]+$'; then
+            break
+        fi
+        printf '  Username must be in userspace/username format.\n'
+    done
 
-printf 'Admin password: '
-read -rs ADMIN_PASSWORD
-printf '\n'
+    printf 'Admin password (nothing will be shown): '
+    read -rs ADMIN_PASSWORD
+    printf '\n'
 
-login_body="$(python3 -c "
+    printf 'Logging in...'
+
+    login_body="$(python3 -c "
 import sys, json
 body = {
     'request': {
@@ -166,22 +170,28 @@ body = {
 print(json.dumps(body), end='')
 " "$ADMIN_USERNAME" "$ADMIN_PASSWORD")"
 
-login_response="$(curl -s -X POST \
-    -H "Content-Type: application/json" \
-    --data-raw "$login_body" \
-    "${SERVER_URL}/cmd/login3" ${CURL_OPTS:-})"
+    login_response="$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        --data-raw "$login_body" \
+        "${SERVER_URL}/cmd/login3" ${CURL_OPTS:-} || true)"
 
-login_code="$(json_get_nested "$login_response" ".response.code")"
+    if [ -z "$login_response" ]; then
+        printf '\n  Network error: could not reach server.\n'
+        printf '  Please check the server URL and try again.  Press Ctrl+C to abort.\n\n'
+        continue
+    fi
 
-# MFA check
-if printf '%s' "$login_code" | grep -qiE '(factor|challenge|otp|mfa|verify|multifactor)'; then
-    printf '\nMFA verification required.\n'
-    printf 'Enter your MFA code: '
-    read -r MFA_CODE
+    login_code="$(json_get_nested "$login_response" ".response.code" 2>/dev/null || true)"
 
-    mfa_token="$(json_get_nested "$login_response" ".response.user.token")"
+    # MFA check
+    if printf '%s' "$login_code" | grep -qiE '(factor|challenge|otp|mfa|verify|multifactor)'; then
+        printf ' MFA verification required.\n'
+        printf 'Enter your MFA code: '
+        read -r MFA_CODE
 
-    mfa_body="$(python3 -c "
+        mfa_token="$(json_get_nested "$login_response" ".response.user.token" 2>/dev/null || true)"
+
+        mfa_body="$(python3 -c "
 import sys, json
 body = {
     'request': {
@@ -193,26 +203,35 @@ body = {
 print(json.dumps(body), end='')
 " "$mfa_token" "$MFA_CODE")"
 
-    login_response="$(curl -s -X POST \
-        -H "Content-Type: application/json" \
-        --data-raw "$mfa_body" \
-        "${SERVER_URL}/cmd/verifylogin" ${CURL_OPTS:-})"
+        login_response="$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            --data-raw "$mfa_body" \
+            "${SERVER_URL}/cmd/verifylogin" ${CURL_OPTS:-} || true)"
 
-    login_code="$(json_get_nested "$login_response" ".response.code")"
-fi
+        if [ -z "$login_response" ]; then
+            printf '  MFA request failed: network error.  Press Ctrl+C to abort.\n\n'
+            continue
+        fi
 
-if [ "$login_code" != "OK" ]; then
-    printf 'Login failed (code: %s).\n' "$login_code" >&2
-    json_get_nested "$login_response" ".response.message" >&2 || true
-    exit 1
-fi
+        login_code="$(json_get_nested "$login_response" ".response.code" 2>/dev/null || true)"
+    fi
 
-ADMIN_TOKEN="$(json_get_nested "$login_response" ".response.user.token")"
-if [ -z "$ADMIN_TOKEN" ]; then
-    printf 'Login succeeded but no token was returned.\n' >&2
-    exit 1
-fi
+    if [ "$login_code" != "OK" ]; then
+        login_msg="$(json_get_nested "$login_response" ".response.message" 2>/dev/null || true)"
+        printf '\n  Login failed (code: %s)%s\n' "$login_code" "${login_msg:+: $login_msg}"
+        printf '  Please check your credentials and try again.  Press Ctrl+C to abort.\n\n'
+        continue
+    fi
 
+    candidate_token="$(json_get_nested "$login_response" ".response.user.token" 2>/dev/null || true)"
+    if [ -z "$candidate_token" ]; then
+        printf '\n  Login succeeded but no token was returned.  Press Ctrl+C to abort.\n\n'
+        continue
+    fi
+
+    ADMIN_TOKEN="$candidate_token"
+done
+printf ' OK\n'
 printf 'Logged in successfully.\n'
 
 # ── Delete OAuth public key from Buzz ─────────────────────────────────────────

@@ -151,10 +151,10 @@ prompt_optional() {
     eval "${var_name}=\$value"
 }
 
-# Read a password silently
+# Read a password silently (standard Unix behaviour: nothing is shown while typing)
 prompt_password() {
     local label="$1" var_name="$2"
-    printf '%s: ' "$label"
+    printf '%s (nothing will be shown): ' "$label"
     local value=""
     read -r -s value
     printf '\n'
@@ -321,59 +321,82 @@ section "Step 4: Admin Login"
 printf 'Log in as a Buzz administrator to perform the one-time setup.\n'
 printf 'This session is used only during setup and is not stored anywhere.\n\n'
 
-while true; do
-    printf 'Admin username (userspace/username, e.g. myschool/admin): '
-    read -r ADMIN_LOGIN
-    if printf '%s' "$ADMIN_LOGIN" | grep -qE '^[^/]+/[^/]+$'; then
-        break
+ADMIN_TOKEN=""
+while [ -z "$ADMIN_TOKEN" ]; do
+    while true; do
+        printf 'Admin username (userspace/username, e.g. myschool/admin): '
+        read -r ADMIN_LOGIN
+        if printf '%s' "$ADMIN_LOGIN" | grep -qE '^[^/]+/[^/]+$'; then
+            break
+        fi
+        printf '  Username must be in userspace/username format.\n'
+    done
+    prompt_password "Admin password" ADMIN_PASSWORD
+
+    printf 'Logging in...'
+
+    LOGIN_BODY=$(json_build \
+        "request.cmd"      "login3" \
+        "request.username" "$ADMIN_LOGIN" \
+        "request.password" "$ADMIN_PASSWORD")
+
+    LOGIN_RESPONSE=$(buzz_post "login3" "$LOGIN_BODY" 2>/dev/null || true)
+
+    if [ -z "$LOGIN_RESPONSE" ]; then
+        printf '\n  Network error: could not reach server.\n'
+        printf '  Please check the server URL and try again.  Press Ctrl+C to abort.\n\n'
+        continue
     fi
-    printf '  Username must be in userspace/username format.\n'
+
+    LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "response.code" || true)
+    [ -z "$LOGIN_CODE" ] && LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "code" || true)
+
+    # ── MFA handling ──────────────────────────────────────────────────────────
+    # If the server returns a code indicating MFA is required, prompt for the code
+    # and call verifylogin to complete authentication.
+    # NOTE: The exact command name and field names depend on your server configuration.
+    #       Adjust MFA_CMD below if your server uses a different command.
+    if printf '%s' "$LOGIN_CODE" | grep -qiE '(factor|mfa|otp|challenge|verify|multifactor)'; then
+        printf ' MFA required.\n'
+        prompt_required "MFA / one-time code" MFA_CODE
+
+        PARTIAL_TOKEN=$(json_get "$LOGIN_RESPONSE" "response.token" || true)
+        [ -z "$PARTIAL_TOKEN" ] && PARTIAL_TOKEN=$(json_get "$LOGIN_RESPONSE" "token" || true)
+
+        MFA_CMD="verifylogin"   # ← adjust if your server uses a different command name
+        MFA_BODY=$(json_build \
+            "request.cmd"   "$MFA_CMD" \
+            "request.token" "$PARTIAL_TOKEN" \
+            "request.code"  "$MFA_CODE")
+
+        LOGIN_RESPONSE=$(buzz_post "$MFA_CMD" "$MFA_BODY" 2>/dev/null || true)
+
+        if [ -z "$LOGIN_RESPONSE" ]; then
+            printf '  MFA request failed: network error.  Press Ctrl+C to abort.\n\n'
+            continue
+        fi
+
+        LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "response.code" || true)
+        [ -z "$LOGIN_CODE" ] && LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "code" || true)
+    fi
+
+    if [ "$LOGIN_CODE" != "OK" ]; then
+        LOGIN_MSG=$(json_get "$LOGIN_RESPONSE" "response.message" 2>/dev/null || true)
+        printf '\n  Login failed (code: %s)%s\n' "$LOGIN_CODE" "${LOGIN_MSG:+: $LOGIN_MSG}"
+        printf '  Please check your credentials and try again.  Press Ctrl+C to abort.\n\n'
+        continue
+    fi
+
+    CANDIDATE_TOKEN=$(json_get "$LOGIN_RESPONSE" "response.user.token" || true)
+    [ -z "$CANDIDATE_TOKEN" ] && CANDIDATE_TOKEN=$(json_get "$LOGIN_RESPONSE" "user.token" || true)
+
+    if [ -z "$CANDIDATE_TOKEN" ]; then
+        printf '\n  Login succeeded but no token was returned.  Press Ctrl+C to abort.\n\n'
+        continue
+    fi
+
+    ADMIN_TOKEN="$CANDIDATE_TOKEN"
 done
-prompt_password "Admin password" ADMIN_PASSWORD
-
-printf 'Logging in...'
-
-LOGIN_BODY=$(json_build \
-    "request.cmd"      "login3" \
-    "request.username" "$ADMIN_LOGIN" \
-    "request.password" "$ADMIN_PASSWORD")
-
-LOGIN_RESPONSE=$(buzz_post "login3" "$LOGIN_BODY")
-LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "response.code")
-[ -z "$LOGIN_CODE" ] && LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "code")
-
-# ── MFA handling ──────────────────────────────────────────────────────────────
-# If the server returns a code indicating MFA is required, prompt for the code
-# and call verifylogin to complete authentication.
-# NOTE: The exact command name and field names depend on your server configuration.
-#       Adjust MFA_CMD below if your server uses a different command.
-if printf '%s' "$LOGIN_CODE" | grep -qiE '(factor|mfa|otp|challenge|verify|multifactor)'; then
-    printf ' MFA required.\n'
-    prompt_required "MFA / one-time code" MFA_CODE
-
-    PARTIAL_TOKEN=$(json_get "$LOGIN_RESPONSE" "response.token")
-    [ -z "$PARTIAL_TOKEN" ] && PARTIAL_TOKEN=$(json_get "$LOGIN_RESPONSE" "token")
-
-    MFA_CMD="verifylogin"   # ← adjust if your server uses a different command name
-    MFA_BODY=$(json_build \
-        "request.cmd"   "$MFA_CMD" \
-        "request.token" "$PARTIAL_TOKEN" \
-        "request.code"  "$MFA_CODE")
-
-    LOGIN_RESPONSE=$(buzz_post "$MFA_CMD" "$MFA_BODY")
-    LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "response.code")
-    [ -z "$LOGIN_CODE" ] && LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "code")
-fi
-
-if [ "$LOGIN_CODE" != "OK" ]; then
-    printf '\n'
-    die "Login failed (code: $LOGIN_CODE).  Response: $LOGIN_RESPONSE"
-fi
-
-ADMIN_TOKEN=$(json_get "$LOGIN_RESPONSE" "response.user.token")
-[ -z "$ADMIN_TOKEN" ] && ADMIN_TOKEN=$(json_get "$LOGIN_RESPONSE" "user.token")
-[ -n "$ADMIN_TOKEN" ] || die "Login returned OK but no token.  Response: $LOGIN_RESPONSE"
-
 ok " OK"
 
 # ── Step 5: Application Identity account ─────────────────────────────────────

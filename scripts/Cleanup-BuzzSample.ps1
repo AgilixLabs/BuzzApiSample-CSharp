@@ -94,58 +94,95 @@ Write-Host "Enter credentials for a Buzz admin account with rights to"
 Write-Host "delete users and manage keys on account $OAuthUserId."
 Write-Host ''
 
-$adminUser = ''
-while (-not ($adminUser -match '^[^/]+/[^/]+$')) {
-    $adminUser = (Read-Host 'Admin username (userspace/username, e.g. myschool/admin)').Trim()
-    if (-not ($adminUser -match '^[^/]+/[^/]+$')) {
-        Write-Host '  Username must be in userspace/username format.' -ForegroundColor Yellow
+$AdminToken = $null
+while ($null -eq $AdminToken) {
+    $adminUser = ''
+    while (-not ($adminUser -match '^[^/]+/[^/]+$')) {
+        $adminUser = (Read-Host 'Admin username (userspace/username, e.g. myschool/admin)').Trim()
+        if (-not ($adminUser -match '^[^/]+/[^/]+$')) {
+            Write-Host '  Username must be in userspace/username format.' -ForegroundColor Yellow
+        }
     }
-}
-$adminPass = Read-Host 'Admin password' -AsSecureString
-$adminPassPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPass))
+    $adminPass = Read-Host 'Admin password' -AsSecureString
+    $adminPassPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPass))
 
-$loginBody = [ordered]@{
-    request = [ordered]@{
-        cmd      = 'login3'
-        username = $adminUser
-        password = $adminPassPlain
-    }
-} | ConvertTo-Json -Depth 5
+    Write-Host 'Logging in...' -NoNewline
 
-$loginResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/login3" `
-    -ContentType 'application/json' -Body $loginBody -ErrorAction SilentlyContinue
-
-$loginCode = $loginResp.response.code
-
-# MFA check
-if ($loginCode -match '(?i)(factor|challenge|otp|mfa|verify|multifactor)') {
-    Write-Host ''
-    Write-Host 'MFA verification required.'
-    $mfaCode  = Read-Host 'Enter your MFA code'
-    $mfaToken = $loginResp.response.user.token
-
-    $mfaBody = [ordered]@{
+    $loginBody = [ordered]@{
         request = [ordered]@{
-            cmd   = 'verifylogin'
-            token = $mfaToken
-            code  = $mfaCode
+            cmd      = 'login3'
+            username = $adminUser
+            password = $adminPassPlain
         }
     } | ConvertTo-Json -Depth 5
 
-    $loginResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/verifylogin" `
-        -ContentType 'application/json' -Body $mfaBody -ErrorAction SilentlyContinue
+    $loginResp = $null
+    try {
+        $loginResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/login3" `
+            -ContentType 'application/json' -Body $loginBody -UseBasicParsing -ErrorAction Stop
+    } catch {
+        Write-Host ''
+        Write-Host "  Network error: $_" -ForegroundColor Red
+        Write-Host '  Please check the server URL and try again.  Press Ctrl+C to abort.' -ForegroundColor Yellow
+        Write-Host ''
+        continue
+    }
 
-    $loginCode = $loginResp.response.code
+    $loginCode = Get-JsonProp (Get-JsonProp $loginResp 'response') 'code'
+    if (-not $loginCode) { $loginCode = Get-JsonProp $loginResp 'code' }
+
+    # MFA check
+    if ($loginCode -match '(?i)(factor|challenge|otp|mfa|verify|multifactor)') {
+        Write-Host ' MFA verification required.' -ForegroundColor Yellow
+        $mfaCode  = Read-Host 'Enter your MFA code'
+        $mfaToken = Get-JsonProp (Get-JsonProp $loginResp 'response') 'token'
+
+        $mfaBody = [ordered]@{
+            request = [ordered]@{
+                cmd   = 'verifylogin'
+                token = $mfaToken
+                code  = $mfaCode
+            }
+        } | ConvertTo-Json -Depth 5
+
+        try {
+            $loginResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/verifylogin" `
+                -ContentType 'application/json' -Body $mfaBody -UseBasicParsing -ErrorAction Stop
+        } catch {
+            Write-Host ''
+            Write-Host "  MFA request failed: $_" -ForegroundColor Red
+            Write-Host '  Please try again.  Press Ctrl+C to abort.' -ForegroundColor Yellow
+            Write-Host ''
+            continue
+        }
+
+        $loginCode = Get-JsonProp (Get-JsonProp $loginResp 'response') 'code'
+        if (-not $loginCode) { $loginCode = Get-JsonProp $loginResp 'code' }
+    }
+
+    if ($loginCode -ne 'OK') {
+        Write-Host ''
+        $loginMsg = Get-JsonProp (Get-JsonProp $loginResp 'response') 'message'
+        $suffix = if ($loginMsg) { ": $loginMsg" } else { '' }
+        Write-Host "  Login failed (code: $loginCode)$suffix." -ForegroundColor Red
+        Write-Host '  Please check your credentials and try again.  Press Ctrl+C to abort.' -ForegroundColor Yellow
+        Write-Host ''
+        continue
+    }
+
+    $candidateToken = Get-JsonProp (Get-JsonProp (Get-JsonProp $loginResp 'response') 'user') 'token'
+    if ([string]::IsNullOrEmpty($candidateToken)) {
+        Write-Host ''
+        Write-Host '  Login succeeded but no token was returned.' -ForegroundColor Red
+        Write-Host '  Please try again.  Press Ctrl+C to abort.' -ForegroundColor Yellow
+        Write-Host ''
+        continue
+    }
+
+    $AdminToken = $candidateToken
 }
-
-if ($loginCode -ne 'OK') {
-    $msg = $loginResp.response.message
-    Write-Error "Login failed (code: $loginCode). $msg"
-    exit 1
-}
-
-$AdminToken = $loginResp.response.user.token
+Write-Host ' OK' -ForegroundColor Green
 Write-Host 'Logged in successfully.'
 
 # ── Delete OAuth public key from Buzz ─────────────────────────────────────────

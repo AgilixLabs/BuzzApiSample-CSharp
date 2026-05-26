@@ -216,90 +216,117 @@ if ([string]::IsNullOrEmpty($contactInformation))     { throw "Contact informati
 if ([string]::IsNullOrEmpty($applicationInformation)) { throw "Application name is required." }
 Write-Host ""
 
-# ── Step 3: Admin login ───────────────────────────────────────────────────────
+# ── Step 4: Admin login ───────────────────────────────────────────────────────
 Write-Host "─── Step 4: Admin Login ───────────────────────────────────" -ForegroundColor Yellow
 Write-Host "Log in as a Buzz administrator who has rights to create users"
 Write-Host "and register OAuth keys.  This session is used only during setup"
 Write-Host "and is not stored anywhere."
 Write-Host ""
-$adminLogin = ""
-while (-not ($adminLogin -match '^[^/]+/[^/]+$')) {
-    $adminLogin = (Read-Host "Admin username (userspace/username, e.g. myschool/admin)").Trim()
-    if (-not ($adminLogin -match '^[^/]+/[^/]+$')) {
-        Write-Host "  Username must be in userspace/username format." -ForegroundColor Yellow
-    }
-}
-$adminPassSec  = Read-Host "Admin password" -AsSecureString
-$adminPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPassSec))
-Write-Host ""
 
-Write-Host "Logging in..." -NoNewline
-$loginBody = @{
-    request = @{
-        cmd      = "login3"
-        username = $adminLogin
-        password = $adminPassword
+$adminToken = $null
+while ($null -eq $adminToken) {
+    $adminLogin = ""
+    while (-not ($adminLogin -match '^[^/]+/[^/]+$')) {
+        $adminLogin = (Read-Host "Admin username (userspace/username, e.g. myschool/admin)").Trim()
+        if (-not ($adminLogin -match '^[^/]+/[^/]+$')) {
+            Write-Host "  Username must be in userspace/username format." -ForegroundColor Yellow
+        }
     }
-} | ConvertTo-Json -Depth 5
-
-try {
-    $loginResult = Invoke-RestMethod `
-        -Uri         "$ServerUrl/cmd/login3" `
-        -Method      Post `
-        -ContentType "application/json" `
-        -Body        $loginBody `
-        -UseBasicParsing
-} catch {
+    $adminPassSec  = Read-Host "Admin password" -AsSecureString
+    $adminPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPassSec))
     Write-Host ""
-    throw "Login request failed: $_"
-}
 
-$loginCode = Get-BuzzCode $loginResult
-
-# ── MFA handling ──────────────────────────────────────────────────────────────
-if ($loginCode -match "(?i)(factor|challenge|otp|mfa|verify|multifactor)") {
-    Write-Host " MFA required." -ForegroundColor Yellow
-    $mfaCode = (Read-Host "Enter your MFA / one-time code").Trim()
-
-    $partialToken = if ($null -ne $loginResult.response) { $loginResult.response.token } else { $loginResult.token }
-
-    $mfaCmd  = "verifylogin"
-    $mfaBody = @{
+    Write-Host "Logging in..." -NoNewline
+    $loginBody = @{
         request = @{
-            cmd   = $mfaCmd
-            token = $partialToken
-            code  = $mfaCode
+            cmd      = "login3"
+            username = $adminLogin
+            password = $adminPassword
         }
     } | ConvertTo-Json -Depth 5
 
+    $loginResult = $null
     try {
         $loginResult = Invoke-RestMethod `
-            -Uri         "$ServerUrl/cmd/$mfaCmd" `
+            -Uri         "$ServerUrl/cmd/login3" `
             -Method      Post `
             -ContentType "application/json" `
-            -Body        $mfaBody `
+            -Body        $loginBody `
             -UseBasicParsing
     } catch {
-        throw "MFA verification request failed: $_"
+        Write-Host ""
+        Write-Host "  Network error: $_" -ForegroundColor Red
+        Write-Host "  Please check the server URL and try again.  Press Ctrl+C to abort." -ForegroundColor Yellow
+        Write-Host ""
+        continue
     }
+
     $loginCode = Get-BuzzCode $loginResult
-}
 
-if ($loginCode -ne "OK") {
-    throw "Login failed: code=$loginCode  $(ConvertTo-Json $loginResult -Depth 5)"
-}
+    # ── MFA handling ──────────────────────────────────────────────────────────
+    if ($loginCode -match "(?i)(factor|challenge|otp|mfa|verify|multifactor)") {
+        Write-Host " MFA required." -ForegroundColor Yellow
+        $mfaCode = (Read-Host "Enter your MFA / one-time code").Trim()
 
-$adminToken = if ($null -ne $loginResult.response -and $null -ne $loginResult.response.user) {
-    $loginResult.response.user.token
-} elseif ($null -ne $loginResult.user) {
-    $loginResult.user.token
-} else {
-    $null
-}
+        $partialToken = if ($null -ne $loginResult.response) { $loginResult.response.token } else { $loginResult.token }
 
-if ([string]::IsNullOrEmpty($adminToken)) {
-    throw "Login succeeded (code=OK) but no token was returned. Response: $(ConvertTo-Json $loginResult -Depth 5)"
+        $mfaCmd  = "verifylogin"
+        $mfaBody = @{
+            request = @{
+                cmd   = $mfaCmd
+                token = $partialToken
+                code  = $mfaCode
+            }
+        } | ConvertTo-Json -Depth 5
+
+        try {
+            $loginResult = Invoke-RestMethod `
+                -Uri         "$ServerUrl/cmd/$mfaCmd" `
+                -Method      Post `
+                -ContentType "application/json" `
+                -Body        $mfaBody `
+                -UseBasicParsing
+        } catch {
+            Write-Host ""
+            Write-Host "  MFA request failed: $_" -ForegroundColor Red
+            Write-Host "  Please try again.  Press Ctrl+C to abort." -ForegroundColor Yellow
+            Write-Host ""
+            continue
+        }
+        $loginCode = Get-BuzzCode $loginResult
+    }
+
+    if ($loginCode -ne "OK") {
+        Write-Host ""
+        $loginMsg = $null
+        if ($loginResult.PSObject.Properties['response']) {
+            $r = $loginResult.response
+            if ($null -ne $r -and $r.PSObject.Properties['message']) { $loginMsg = [string]$r.message }
+        }
+        $suffix = if ($loginMsg) { ": $loginMsg" } else { "" }
+        Write-Host "  Login failed (code: $loginCode)$suffix." -ForegroundColor Red
+        Write-Host "  Please check your credentials and try again.  Press Ctrl+C to abort." -ForegroundColor Yellow
+        Write-Host ""
+        continue
+    }
+
+    $candidateToken = $null
+    if ($null -ne $loginResult.response -and $null -ne $loginResult.response.user) {
+        $candidateToken = $loginResult.response.user.token
+    } elseif ($null -ne $loginResult.user) {
+        $candidateToken = $loginResult.user.token
+    }
+
+    if ([string]::IsNullOrEmpty($candidateToken)) {
+        Write-Host ""
+        Write-Host "  Login succeeded but no token was returned." -ForegroundColor Red
+        Write-Host "  Please try again.  Press Ctrl+C to abort." -ForegroundColor Yellow
+        Write-Host ""
+        continue
+    }
+
+    $adminToken = $candidateToken
 }
 Write-Host " OK" -ForegroundColor Green
 Write-Host ""
