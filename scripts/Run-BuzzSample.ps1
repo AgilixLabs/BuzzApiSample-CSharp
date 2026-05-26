@@ -118,7 +118,28 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 
 Push-Location $ProjectRoot
 try {
-    dotnet run
+    # Pick the highest netX.Y framework in the .csproj so no script update is
+    # needed when a new SDK year is added to TargetFrameworks.
+    $csproj = Get-ChildItem -Path $ProjectRoot -Filter '*.csproj' -Recurse -Depth 1 |
+              Select-Object -First 1
+    $framework = $null
+    if ($csproj) {
+        [xml]$proj = Get-Content $csproj.FullName -Raw
+        $tfs = $proj.Project.PropertyGroup.TargetFrameworks
+        if (-not $tfs) { $tfs = $proj.Project.PropertyGroup.TargetFramework }
+        if ($tfs) {
+            $nets = $tfs -split ';' |
+                    Where-Object { $_ -match '^net\d' } |
+                    Sort-Object { [version]([regex]::Match($_, '[\d.]+').Value) } |
+                    Select-Object -Last 1
+            $framework = $nets
+        }
+    }
+    if ($framework) {
+        dotnet run --framework $framework
+    } else {
+        dotnet run
+    }
 } finally {
     Pop-Location
 }

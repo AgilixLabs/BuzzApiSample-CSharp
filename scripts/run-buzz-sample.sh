@@ -124,4 +124,31 @@ if ! command -v dotnet &>/dev/null; then
 fi
 
 cd "$PROJECT_ROOT"
-dotnet run
+
+# Pick the highest netX.Y framework listed in the .csproj so the script never
+# needs updating when a new SDK year is added to TargetFrameworks.
+CSPROJ=$(find "$PROJECT_ROOT" -maxdepth 2 -name '*.csproj' | head -1)
+FRAMEWORK=""
+if [ -n "$CSPROJ" ]; then
+    FRAMEWORK=$(python3 - "$CSPROJ" <<'PYEOF'
+import sys, re
+try:
+    from xml.etree import ElementTree as ET
+    root = ET.parse(sys.argv[1]).getroot()
+    tfs = (root.findtext('.//TargetFrameworks') or
+           root.findtext('.//TargetFramework') or '')
+    nets = [(f.strip(), [int(x) for x in re.findall(r'\d+', f)])
+            for f in tfs.split(';') if re.match(r'^net\d', f.strip())]
+    if nets:
+        print(max(nets, key=lambda x: x[1])[0])
+except Exception:
+    pass
+PYEOF
+)
+fi
+
+if [ -n "$FRAMEWORK" ]; then
+    dotnet run --framework "$FRAMEWORK"
+else
+    dotnet run
+fi
