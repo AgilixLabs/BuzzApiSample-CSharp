@@ -86,6 +86,59 @@ print(json.dumps(d), end='')
 " "$@"
 }
 
+# Parse a scalar field from a Buzz API response — handles both JSON and XML.
+# Usage: buzz_get_field <response_text> <field>
+# Supported fields: code  token  partial_token  message
+buzz_get_field() {
+    local resp="$1" field="$2"
+    python3 - "$resp" "$field" <<'PYEOF'
+import sys
+resp, field = sys.argv[1], sys.argv[2]
+result = ''
+try:
+    import json
+    d = json.loads(resp)
+    if field == 'code':
+        for path in (['response','code'], ['code'], ['responses','code']):
+            v = d
+            for k in path:
+                v = v.get(k) if isinstance(v, dict) else None
+            if isinstance(v, str) and v:
+                result = v; break
+    elif field == 'token':
+        result = (((d.get('response') or {}).get('user') or {}).get('token') or
+                  (d.get('user') or {}).get('token', ''))
+    elif field == 'partial_token':
+        result = ((d.get('response') or {}).get('token') or d.get('token', ''))
+    elif field == 'message':
+        result = ((d.get('response') or {}).get('message') or d.get('message', ''))
+except Exception:
+    pass
+if not result:
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(resp)
+        r = root if root.tag == 'response' else root.find('.//response')
+        if r is not None:
+            if field == 'code':
+                result = r.get('code', '')
+            elif field == 'token':
+                u = r.find('user')
+                result = u.get('token', '') if u is not None else ''
+            elif field == 'partial_token':
+                result = r.get('token', '')
+                if not result:
+                    u = r.find('user')
+                    result = u.get('token', '') if u is not None else ''
+            elif field == 'message':
+                result = r.get('message', '')
+    except Exception:
+        pass
+if result:
+    sys.stdout.write(result)
+PYEOF
+}
+
 # ── Load config ───────────────────────────────────────────────────────────────
 if [ ! -f "$CONFIG_FILE" ]; then
     printf 'buzz-config.json not found — nothing to clean up.\n'
@@ -182,21 +235,7 @@ print(json.dumps(body), end='')
     fi
 
     # Extract code — tries multiple paths used by different Buzz API versions.
-    login_code="$(python3 - "$login_response" <<'PYEOF'
-import sys, json
-try:
-    d = json.loads(sys.argv[1])
-    for path in (['response','code'], ['code'], ['responses','code']):
-        v = d
-        for k in path:
-            v = v.get(k) if isinstance(v, dict) else None
-        if isinstance(v, str) and v:
-            sys.stdout.write(v)
-            break
-except Exception:
-    pass
-PYEOF
-)"
+    login_code="$(buzz_get_field "$login_response" code)"
 
     # MFA check
     if printf '%s' "$login_code" | grep -qiE '(factor|challenge|otp|mfa|verify|multifactor)'; then
@@ -204,16 +243,7 @@ PYEOF
         printf 'Enter your MFA code: '
         read -r MFA_CODE
 
-        mfa_token="$(python3 - "$login_response" <<'PYEOF'
-import sys, json
-try:
-    d = json.loads(sys.argv[1])
-    t = (d.get('response') or {}).get('token') or d.get('token', '')
-    sys.stdout.write(str(t))
-except Exception:
-    pass
-PYEOF
-)"
+        mfa_token="$(buzz_get_field "$login_response" partial_token)"
 
         mfa_body="$(python3 -c "
 import sys, json
@@ -237,35 +267,11 @@ print(json.dumps(body), end='')
             continue
         fi
 
-        login_code="$(python3 - "$login_response" <<'PYEOF'
-import sys, json
-try:
-    d = json.loads(sys.argv[1])
-    for path in (['response','code'], ['code'], ['responses','code']):
-        v = d
-        for k in path:
-            v = v.get(k) if isinstance(v, dict) else None
-        if isinstance(v, str) and v:
-            sys.stdout.write(v)
-            break
-except Exception:
-    pass
-PYEOF
-)"
+        login_code="$(buzz_get_field "$login_response" code)"
     fi
 
     if [ "$login_code" != "OK" ]; then
-        login_msg="$(python3 - "$login_response" <<'PYEOF'
-import sys, json
-try:
-    d = json.loads(sys.argv[1])
-    msg = (d.get('response') or {}).get('message') or d.get('message', '')
-    if msg:
-        sys.stdout.write(str(msg))
-except Exception:
-    pass
-PYEOF
-)"
+        login_msg="$(buzz_get_field "$login_response" message)"
         printf '\n  Login failed (code: %s)%s\n' "$login_code" "${login_msg:+: $login_msg}"
         # If the code is empty the response format was not recognised — show it raw for diagnosis.
         if [ -z "$login_code" ]; then
@@ -275,17 +281,7 @@ PYEOF
         continue
     fi
 
-    candidate_token="$(python3 - "$login_response" <<'PYEOF'
-import sys, json
-try:
-    d = json.loads(sys.argv[1])
-    t = ((d.get('response') or {}).get('user') or {}).get('token') or \
-        (d.get('user') or {}).get('token', '')
-    sys.stdout.write(str(t))
-except Exception:
-    pass
-PYEOF
-)"
+    candidate_token="$(buzz_get_field "$login_response" token)"
     if [ -z "$candidate_token" ]; then
         printf '\n  Login succeeded but no token was returned.  Press Ctrl+C to abort.\n\n'
         continue
@@ -350,12 +346,7 @@ delete_response="$(curl -s -X POST \
     --data-raw "$delete_body" \
     ${CURL_OPTS:-})"
 
-delete_code="$(json_get_nested "$delete_response" ".responses.user[0].code" 2>/dev/null \
-    || json_get_nested "$delete_response" ".response.code" 2>/dev/null || true)"
-
-if [ -z "$delete_code" ] && command -v jq &>/dev/null; then
-    delete_code="$(printf '%s' "$delete_response" | jq -r '.responses.user[0].code // .response.code // empty')"
-fi
+delete_code="$(buzz_get_field "$delete_response" code)"
 
 case "$delete_code" in
     OK)

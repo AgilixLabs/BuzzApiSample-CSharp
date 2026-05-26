@@ -229,6 +229,67 @@ print(json.dumps(result))
 PYEOF
 }
 
+# Parse a scalar field from a Buzz API response — handles both JSON and XML.
+# Usage: buzz_get_field <response_text> <field>
+# Supported fields: code  token  partial_token  message  userid
+buzz_get_field() {
+    local resp="$1" field="$2"
+    python3 - "$resp" "$field" <<'PYEOF'
+import sys
+resp, field = sys.argv[1], sys.argv[2]
+result = ''
+try:
+    import json
+    d = json.loads(resp)
+    if field == 'code':
+        for path in (['response','code'], ['code'], ['responses','code']):
+            v = d
+            for k in path:
+                v = v.get(k) if isinstance(v, dict) else None
+            if isinstance(v, str) and v:
+                result = v; break
+    elif field == 'token':
+        result = (((d.get('response') or {}).get('user') or {}).get('token') or
+                  (d.get('user') or {}).get('token', ''))
+    elif field == 'partial_token':
+        result = ((d.get('response') or {}).get('token') or d.get('token', ''))
+    elif field == 'message':
+        result = ((d.get('response') or {}).get('message') or d.get('message', ''))
+    elif field == 'userid':
+        r = d.get('response', d)
+        inner = r.get('responses', {}).get('response', {})
+        if isinstance(inner, list): inner = inner[0]
+        result = str(inner.get('user', {}).get('userid', '') or '')
+except Exception:
+    pass
+if not result:
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(resp)
+        r = root if root.tag == 'response' else root.find('.//response')
+        if r is not None:
+            if field == 'code':
+                result = r.get('code', '')
+            elif field == 'token':
+                u = r.find('user')
+                result = u.get('token', '') if u is not None else ''
+            elif field == 'partial_token':
+                result = r.get('token', '')
+                if not result:
+                    u = r.find('user')
+                    result = u.get('token', '') if u is not None else ''
+            elif field == 'message':
+                result = r.get('message', '')
+            elif field == 'userid':
+                u = r.find('.//user')
+                result = u.get('userid', '') if u is not None else ''
+    except Exception:
+        pass
+if result:
+    sys.stdout.write(result)
+PYEOF
+}
+
 # ── Buzz API helpers ──────────────────────────────────────────────────────────
 
 # POST a JSON body to a Buzz command endpoint.
@@ -347,23 +408,8 @@ while [ -z "$ADMIN_TOKEN" ]; do
         continue
     fi
 
-    # Extract the response code — tries multiple paths used by different Buzz API versions.
-    # Uses Python directly to avoid silent jq/shell parsing failures.
-    LOGIN_CODE=$(python3 - "$LOGIN_RESPONSE" <<'PYEOF'
-import sys, json
-try:
-    d = json.loads(sys.argv[1])
-    for path in (['response','code'], ['code'], ['responses','code']):
-        v = d
-        for k in path:
-            v = v.get(k) if isinstance(v, dict) else None
-        if isinstance(v, str) and v:
-            sys.stdout.write(v)
-            break
-except Exception:
-    pass
-PYEOF
-)
+    # Extract the response code — handles both JSON and XML Buzz API responses.
+    LOGIN_CODE=$(buzz_get_field "$LOGIN_RESPONSE" code)
 
     # ── MFA handling ──────────────────────────────────────────────────────────
     # If the server returns a code indicating MFA is required, prompt for the code
@@ -374,16 +420,7 @@ PYEOF
         printf ' MFA required.\n'
         prompt_required "MFA / one-time code" MFA_CODE
 
-        PARTIAL_TOKEN=$(python3 - "$LOGIN_RESPONSE" <<'PYEOF'
-import sys, json
-try:
-    d = json.loads(sys.argv[1])
-    t = (d.get('response') or {}).get('token') or d.get('token', '')
-    sys.stdout.write(str(t))
-except Exception:
-    pass
-PYEOF
-)
+        PARTIAL_TOKEN=$(buzz_get_field "$LOGIN_RESPONSE" partial_token)
 
         MFA_CMD="verifylogin"   # ← adjust if your server uses a different command name
         MFA_BODY=$(json_build \
@@ -398,35 +435,11 @@ PYEOF
             continue
         fi
 
-        LOGIN_CODE=$(python3 - "$LOGIN_RESPONSE" <<'PYEOF'
-import sys, json
-try:
-    d = json.loads(sys.argv[1])
-    for path in (['response','code'], ['code'], ['responses','code']):
-        v = d
-        for k in path:
-            v = v.get(k) if isinstance(v, dict) else None
-        if isinstance(v, str) and v:
-            sys.stdout.write(v)
-            break
-except Exception:
-    pass
-PYEOF
-)
+        LOGIN_CODE=$(buzz_get_field "$LOGIN_RESPONSE" code)
     fi
 
     if [ "$LOGIN_CODE" != "OK" ]; then
-        LOGIN_MSG=$(python3 - "$LOGIN_RESPONSE" <<'PYEOF'
-import sys, json
-try:
-    d = json.loads(sys.argv[1])
-    msg = (d.get('response') or {}).get('message') or d.get('message', '')
-    if msg:
-        sys.stdout.write(str(msg))
-except Exception:
-    pass
-PYEOF
-)
+        LOGIN_MSG=$(buzz_get_field "$LOGIN_RESPONSE" message)
         printf '\n  Login failed (code: %s)%s\n' "$LOGIN_CODE" "${LOGIN_MSG:+: $LOGIN_MSG}"
         # If the code is empty the response format was not recognised — show it raw for diagnosis.
         if [ -z "$LOGIN_CODE" ]; then
@@ -436,17 +449,7 @@ PYEOF
         continue
     fi
 
-    CANDIDATE_TOKEN=$(python3 - "$LOGIN_RESPONSE" <<'PYEOF'
-import sys, json
-try:
-    d = json.loads(sys.argv[1])
-    t = ((d.get('response') or {}).get('user') or {}).get('token') or \
-        (d.get('user') or {}).get('token', '')
-    sys.stdout.write(str(t))
-except Exception:
-    pass
-PYEOF
-)
+    CANDIDATE_TOKEN=$(buzz_get_field "$LOGIN_RESPONSE" token)
 
     if [ -z "$CANDIDATE_TOKEN" ]; then
         printf '\n  Login succeeded but no token was returned.  Press Ctrl+C to abort.\n\n'
@@ -473,7 +476,7 @@ if printf '%s' "$CREATE_NEW" | grep -qiE '^y'; then
     # List available domains to help the user choose
     printf 'Fetching available domains...'
     DOMAINS_RESPONSE=$(buzz_get "getdomains" "" "$ADMIN_TOKEN" 2>/dev/null || true)
-    DOMAIN_CODE=$(json_get "$DOMAINS_RESPONSE" "response.code")
+    DOMAIN_CODE=$(buzz_get_field "$DOMAINS_RESPONSE" code)
 
     if [ "$DOMAIN_CODE" = "OK" ]; then
         printf ' done\n\n'
@@ -481,47 +484,52 @@ if printf '%s' "$CREATE_NEW" | grep -qiE '^y'; then
         # Build a numbered list of domains for the user to choose from
         DOMAIN_IDS=()
         DOMAIN_NAMES=()
-        if [ "$USE_JQ" -eq 1 ]; then
-            while IFS= read -r line; do
-                DOMAIN_IDS+=("$line")
-            done < <(printf '%s' "$DOMAINS_RESPONSE" | \
-                jq -r '.response.domains.domain | if type == "array" then .[] else . end | .domainid' \
-                2>/dev/null || true)
-            while IFS= read -r line; do
-                DOMAIN_NAMES+=("$line")
-            done < <(printf '%s' "$DOMAINS_RESPONSE" | \
-                jq -r '.response.domains.domain | if type == "array" then .[] else . end | .name' \
-                2>/dev/null || true)
-        else
-            while IFS= read -r line; do
-                DOMAIN_IDS+=("$line")
-            done < <(python3 - "$DOMAINS_RESPONSE" <<'PYEOF'
-import sys, json
+        while IFS= read -r line; do
+            DOMAIN_IDS+=("$line")
+        done < <(python3 - "$DOMAINS_RESPONSE" domainid <<'PYEOF'
+import sys
+resp, field = sys.argv[1], sys.argv[2]
+results = []
 try:
-    data = json.loads(sys.argv[1])
-    domains = data.get('response', {}).get('domains', {}).get('domain', [])
-    if isinstance(domains, dict): domains = [domains]
-    for d in domains:
-        print(d.get('domainid', ''))
+    import json
+    items = json.loads(resp).get('response', {}).get('domains', {}).get('domain', [])
+    if isinstance(items, dict): items = [items]
+    results = [str(d.get(field, '')) for d in (items or [])]
 except Exception:
     pass
+if not results:
+    try:
+        import xml.etree.ElementTree as ET
+        results = [d.get(field, '') for d in ET.fromstring(resp).findall('.//domain')]
+    except Exception:
+        pass
+for r in results:
+    if r: print(r)
 PYEOF
 )
-            while IFS= read -r line; do
-                DOMAIN_NAMES+=("$line")
-            done < <(python3 - "$DOMAINS_RESPONSE" <<'PYEOF'
-import sys, json
+        while IFS= read -r line; do
+            DOMAIN_NAMES+=("$line")
+        done < <(python3 - "$DOMAINS_RESPONSE" name <<'PYEOF'
+import sys
+resp, field = sys.argv[1], sys.argv[2]
+results = []
 try:
-    data = json.loads(sys.argv[1])
-    domains = data.get('response', {}).get('domains', {}).get('domain', [])
-    if isinstance(domains, dict): domains = [domains]
-    for d in domains:
-        print(d.get('name', ''))
+    import json
+    items = json.loads(resp).get('response', {}).get('domains', {}).get('domain', [])
+    if isinstance(items, dict): items = [items]
+    results = [str(d.get(field, '')) for d in (items or [])]
 except Exception:
     pass
+if not results:
+    try:
+        import xml.etree.ElementTree as ET
+        results = [d.get(field, '') for d in ET.fromstring(resp).findall('.//domain')]
+    except Exception:
+        pass
+for r in results:
+    if r: print(r)
 PYEOF
 )
-        fi
 
         if [ "${#DOMAIN_IDS[@]}" -gt 0 ]; then
             printf 'Available domains:\n'
@@ -572,28 +580,14 @@ PYEOF
 )
 
     CREATE_RESPONSE=$(buzz_post "createusers2" "$CREATE_BODY" "$ADMIN_TOKEN")
-    CREATE_CODE=$(json_get "$CREATE_RESPONSE" "response.code")
-    [ -z "$CREATE_CODE" ] && CREATE_CODE=$(json_get "$CREATE_RESPONSE" "code")
+    CREATE_CODE=$(buzz_get_field "$CREATE_RESPONSE" code)
 
     if [ "$CREATE_CODE" != "OK" ]; then
         printf '\n'
         die "CreateUsers2 failed (code: $CREATE_CODE).  Response: $CREATE_RESPONSE"
     fi
 
-    # Extract the userid from responses.response[0].user.userid (may be array or single)
-    OAUTH_USER_ID=$(python3 - "$CREATE_RESPONSE" <<'PYEOF'
-import sys, json
-try:
-    data = json.loads(sys.argv[1])
-    resp = data.get('response', data)
-    inner = resp.get('responses', {}).get('response', {})
-    if isinstance(inner, list): inner = inner[0]
-    userid = inner.get('user', {}).get('userid', '')
-    sys.stdout.write(str(userid))
-except Exception:
-    pass
-PYEOF
-)
+    OAUTH_USER_ID=$(buzz_get_field "$CREATE_RESPONSE" userid)
     [ -n "$OAUTH_USER_ID" ] || die "CreateUsers2 succeeded but returned no userid.  Response: $CREATE_RESPONSE"
     ok " OK (userid: $OAUTH_USER_ID)"
 
