@@ -138,8 +138,7 @@ prompt_required() {
         [ -z "$value" ] && value="$default"
         [ -z "$value" ] && printf '  (required)\n'
     done
-    # Assign to the named variable using printf/read via subshell-safe method
-    eval "${var_name}=\$value"
+    printf -v "$var_name" '%s' "$value"
 }
 
 # Read an optional value (may be empty)
@@ -148,7 +147,7 @@ prompt_optional() {
     printf '%s (optional, press Enter to skip): ' "$label"
     local value=""
     read -r value
-    eval "${var_name}=\$value"
+    printf -v "$var_name" '%s' "$value"
 }
 
 # Read a password silently (standard Unix behaviour: nothing is shown while typing)
@@ -158,7 +157,7 @@ prompt_password() {
     local value=""
     read -r -s value
     printf '\n'
-    eval "${var_name}=\$value"
+    printf -v "$var_name" '%s' "$value"
 }
 
 # ── JSON helpers ──────────────────────────────────────────────────────────────
@@ -239,7 +238,7 @@ buzz_post() {
     local cmd="$1" body="$2" token="${3:-}"
     local -a headers=("-H" "Content-Type: application/json")
     [ -n "$token" ] && headers+=("-H" "Authorization: Bearer $token")
-    curl -s ${CURL_OPTS:-} -X POST "${SERVER_URL}/cmd/${cmd}" \
+    curl -sL ${CURL_OPTS:-} -X POST "${SERVER_URL}/cmd/${cmd}" \
         "${headers[@]}" -d "$body"
 }
 
@@ -263,7 +262,7 @@ buzz_get() {
     [ -n "$params" ] && url="${url}?${params}"
     local -a headers=()
     [ -n "$token" ] && headers+=("-H" "Authorization: Bearer $token")
-    curl -s ${CURL_OPTS:-} "${headers[@]}" "$url"
+    curl -sL ${CURL_OPTS:-} "${headers[@]}" "$url"
 }
 
 # ── Banner ────────────────────────────────────────────────────────────────────
@@ -348,8 +347,23 @@ while [ -z "$ADMIN_TOKEN" ]; do
         continue
     fi
 
-    LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "response.code" || true)
-    [ -z "$LOGIN_CODE" ] && LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "code" || true)
+    # Extract the response code — tries multiple paths used by different Buzz API versions.
+    # Uses Python directly to avoid silent jq/shell parsing failures.
+    LOGIN_CODE=$(python3 - "$LOGIN_RESPONSE" <<'PYEOF'
+import sys, json
+try:
+    d = json.loads(sys.argv[1])
+    for path in (['response','code'], ['code'], ['responses','code']):
+        v = d
+        for k in path:
+            v = v.get(k) if isinstance(v, dict) else None
+        if isinstance(v, str) and v:
+            sys.stdout.write(v)
+            break
+except Exception:
+    pass
+PYEOF
+)
 
     # ── MFA handling ──────────────────────────────────────────────────────────
     # If the server returns a code indicating MFA is required, prompt for the code
@@ -360,8 +374,16 @@ while [ -z "$ADMIN_TOKEN" ]; do
         printf ' MFA required.\n'
         prompt_required "MFA / one-time code" MFA_CODE
 
-        PARTIAL_TOKEN=$(json_get "$LOGIN_RESPONSE" "response.token" || true)
-        [ -z "$PARTIAL_TOKEN" ] && PARTIAL_TOKEN=$(json_get "$LOGIN_RESPONSE" "token" || true)
+        PARTIAL_TOKEN=$(python3 - "$LOGIN_RESPONSE" <<'PYEOF'
+import sys, json
+try:
+    d = json.loads(sys.argv[1])
+    t = (d.get('response') or {}).get('token') or d.get('token', '')
+    sys.stdout.write(str(t))
+except Exception:
+    pass
+PYEOF
+)
 
         MFA_CMD="verifylogin"   # ← adjust if your server uses a different command name
         MFA_BODY=$(json_build \
@@ -376,19 +398,55 @@ while [ -z "$ADMIN_TOKEN" ]; do
             continue
         fi
 
-        LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "response.code" || true)
-        [ -z "$LOGIN_CODE" ] && LOGIN_CODE=$(json_get "$LOGIN_RESPONSE" "code" || true)
+        LOGIN_CODE=$(python3 - "$LOGIN_RESPONSE" <<'PYEOF'
+import sys, json
+try:
+    d = json.loads(sys.argv[1])
+    for path in (['response','code'], ['code'], ['responses','code']):
+        v = d
+        for k in path:
+            v = v.get(k) if isinstance(v, dict) else None
+        if isinstance(v, str) and v:
+            sys.stdout.write(v)
+            break
+except Exception:
+    pass
+PYEOF
+)
     fi
 
     if [ "$LOGIN_CODE" != "OK" ]; then
-        LOGIN_MSG=$(json_get "$LOGIN_RESPONSE" "response.message" 2>/dev/null || true)
+        LOGIN_MSG=$(python3 - "$LOGIN_RESPONSE" <<'PYEOF'
+import sys, json
+try:
+    d = json.loads(sys.argv[1])
+    msg = (d.get('response') or {}).get('message') or d.get('message', '')
+    if msg:
+        sys.stdout.write(str(msg))
+except Exception:
+    pass
+PYEOF
+)
         printf '\n  Login failed (code: %s)%s\n' "$LOGIN_CODE" "${LOGIN_MSG:+: $LOGIN_MSG}"
+        # If the code is empty the response format was not recognised — show it raw for diagnosis.
+        if [ -z "$LOGIN_CODE" ]; then
+            printf '  Server response: %.400s\n' "$LOGIN_RESPONSE"
+        fi
         printf '  Please check your credentials and try again.  Press Ctrl+C to abort.\n\n'
         continue
     fi
 
-    CANDIDATE_TOKEN=$(json_get "$LOGIN_RESPONSE" "response.user.token" || true)
-    [ -z "$CANDIDATE_TOKEN" ] && CANDIDATE_TOKEN=$(json_get "$LOGIN_RESPONSE" "user.token" || true)
+    CANDIDATE_TOKEN=$(python3 - "$LOGIN_RESPONSE" <<'PYEOF'
+import sys, json
+try:
+    d = json.loads(sys.argv[1])
+    t = ((d.get('response') or {}).get('user') or {}).get('token') or \
+        (d.get('user') or {}).get('token', '')
+    sys.stdout.write(str(t))
+except Exception:
+    pass
+PYEOF
+)
 
     if [ -z "$CANDIDATE_TOKEN" ]; then
         printf '\n  Login succeeded but no token was returned.  Press Ctrl+C to abort.\n\n'

@@ -170,7 +170,7 @@ body = {
 print(json.dumps(body), end='')
 " "$ADMIN_USERNAME" "$ADMIN_PASSWORD")"
 
-    login_response="$(curl -s -X POST \
+    login_response="$(curl -sL -X POST \
         -H "Content-Type: application/json" \
         --data-raw "$login_body" \
         "${SERVER_URL}/cmd/login3" ${CURL_OPTS:-} || true)"
@@ -181,7 +181,22 @@ print(json.dumps(body), end='')
         continue
     fi
 
-    login_code="$(json_get_nested "$login_response" ".response.code" 2>/dev/null || true)"
+    # Extract code — tries multiple paths used by different Buzz API versions.
+    login_code="$(python3 - "$login_response" <<'PYEOF'
+import sys, json
+try:
+    d = json.loads(sys.argv[1])
+    for path in (['response','code'], ['code'], ['responses','code']):
+        v = d
+        for k in path:
+            v = v.get(k) if isinstance(v, dict) else None
+        if isinstance(v, str) and v:
+            sys.stdout.write(v)
+            break
+except Exception:
+    pass
+PYEOF
+)"
 
     # MFA check
     if printf '%s' "$login_code" | grep -qiE '(factor|challenge|otp|mfa|verify|multifactor)'; then
@@ -189,7 +204,16 @@ print(json.dumps(body), end='')
         printf 'Enter your MFA code: '
         read -r MFA_CODE
 
-        mfa_token="$(json_get_nested "$login_response" ".response.user.token" 2>/dev/null || true)"
+        mfa_token="$(python3 - "$login_response" <<'PYEOF'
+import sys, json
+try:
+    d = json.loads(sys.argv[1])
+    t = (d.get('response') or {}).get('token') or d.get('token', '')
+    sys.stdout.write(str(t))
+except Exception:
+    pass
+PYEOF
+)"
 
         mfa_body="$(python3 -c "
 import sys, json
@@ -203,7 +227,7 @@ body = {
 print(json.dumps(body), end='')
 " "$mfa_token" "$MFA_CODE")"
 
-        login_response="$(curl -s -X POST \
+        login_response="$(curl -sL -X POST \
             -H "Content-Type: application/json" \
             --data-raw "$mfa_body" \
             "${SERVER_URL}/cmd/verifylogin" ${CURL_OPTS:-} || true)"
@@ -213,17 +237,55 @@ print(json.dumps(body), end='')
             continue
         fi
 
-        login_code="$(json_get_nested "$login_response" ".response.code" 2>/dev/null || true)"
+        login_code="$(python3 - "$login_response" <<'PYEOF'
+import sys, json
+try:
+    d = json.loads(sys.argv[1])
+    for path in (['response','code'], ['code'], ['responses','code']):
+        v = d
+        for k in path:
+            v = v.get(k) if isinstance(v, dict) else None
+        if isinstance(v, str) and v:
+            sys.stdout.write(v)
+            break
+except Exception:
+    pass
+PYEOF
+)"
     fi
 
     if [ "$login_code" != "OK" ]; then
-        login_msg="$(json_get_nested "$login_response" ".response.message" 2>/dev/null || true)"
+        login_msg="$(python3 - "$login_response" <<'PYEOF'
+import sys, json
+try:
+    d = json.loads(sys.argv[1])
+    msg = (d.get('response') or {}).get('message') or d.get('message', '')
+    if msg:
+        sys.stdout.write(str(msg))
+except Exception:
+    pass
+PYEOF
+)"
         printf '\n  Login failed (code: %s)%s\n' "$login_code" "${login_msg:+: $login_msg}"
+        # If the code is empty the response format was not recognised — show it raw for diagnosis.
+        if [ -z "$login_code" ]; then
+            printf '  Server response: %.400s\n' "$login_response"
+        fi
         printf '  Please check your credentials and try again.  Press Ctrl+C to abort.\n\n'
         continue
     fi
 
-    candidate_token="$(json_get_nested "$login_response" ".response.user.token" 2>/dev/null || true)"
+    candidate_token="$(python3 - "$login_response" <<'PYEOF'
+import sys, json
+try:
+    d = json.loads(sys.argv[1])
+    t = ((d.get('response') or {}).get('user') or {}).get('token') or \
+        (d.get('user') or {}).get('token', '')
+    sys.stdout.write(str(t))
+except Exception:
+    pass
+PYEOF
+)"
     if [ -z "$candidate_token" ]; then
         printf '\n  Login succeeded but no token was returned.  Press Ctrl+C to abort.\n\n'
         continue
