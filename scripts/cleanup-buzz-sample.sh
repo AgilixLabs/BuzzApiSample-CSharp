@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cleanup.sh — Remove all artifacts created by setup-buzz-oauth.sh.
+# cleanup-buzz-sample.sh — Remove all artifacts created by setup-buzz-oauth.sh.
 #
 # This script:
 #   1. Reads buzz-config.json to find the OAuth account details
@@ -12,7 +12,7 @@
 # After running, the environment is back to a completely clean state.
 #
 # Usage:
-#   ./scripts/cleanup.sh
+#   ./scripts/cleanup-buzz-sample.sh
 #
 # Requires: curl, python3 (jq recommended but optional)
 
@@ -141,8 +141,14 @@ printf '\n── Admin login ─────────────────
 printf 'Enter credentials for a Buzz admin account with rights to\n'
 printf 'delete users and manage keys on account %s.\n\n' "$OAUTH_USER_ID"
 
-printf 'Admin username (userspace/username or just username): '
-read -r ADMIN_USERNAME
+while true; do
+    printf 'Admin username (userspace/username, e.g. myschool/admin): '
+    read -r ADMIN_USERNAME
+    if printf '%s' "$ADMIN_USERNAME" | grep -qE '^[^/]+/[^/]+$'; then
+        break
+    fi
+    printf '  Username must be in userspace/username format.\n'
+done
 
 printf 'Admin password: '
 read -rs ADMIN_PASSWORD
@@ -314,6 +320,6 @@ printf 'buzz-config.json deleted.\n'
 printf '\n'
 printf '════════════════════════════════════════════════════════\n'
 printf '  Cleanup complete.  Environment is back to a clean state.\n'
-printf '  Run ./scripts/run.sh to set up and run the sample again.\n'
+printf '  Run ./scripts/run-buzz-sample.sh to set up and run the sample again.\n'
 printf '════════════════════════════════════════════════════════\n'
 printf '\n'

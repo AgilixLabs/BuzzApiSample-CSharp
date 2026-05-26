@@ -11,7 +11,7 @@ namespace BuzzAPISample
         {
             /* CONFIGURATION
              *
-             * Quickest path: run ./scripts/run.sh (Linux) or .\scripts\Run-BuzzSample.ps1
+             * Quickest path: run ./scripts/run-buzz-sample.sh (Linux) or .\scripts\Run-BuzzSample.ps1
              * (Windows/macOS) — it checks whether setup has been done and runs it if not,
              * then launches this program.
              *
@@ -26,7 +26,7 @@ namespace BuzzAPISample
             if (fileCfg is null)
                 throw new FileNotFoundException(
                     "buzz-config.json not found.\n" +
-                    "  Linux  : ./scripts/run.sh\n" +
+                    "  Linux  : ./scripts/run-buzz-sample.sh\n" +
                     "  Windows: .\\scripts\\Run-BuzzSample.ps1\n" +
                     "  Manual : see README.md");
 

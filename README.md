@@ -48,8 +48,8 @@ the interactive setup first, then executes the read-only demo.
 
 **Linux** (bash, requires `openssl curl python3 dotnet`):
 ```bash
-chmod +x scripts/run.sh
-./scripts/run.sh
+chmod +x scripts/run-buzz-sample.sh
+./scripts/run-buzz-sample.sh
 ```
 
 **Windows / macOS** (PowerShell 7+):
@@ -59,8 +59,8 @@ chmod +x scripts/run.sh
 
 To force re-running the setup even when already configured:
 ```bash
-./scripts/run.sh --setup          # Linux
-.\scripts\Run-BuzzSample.ps1 -ForceSetup   # Windows/macOS
+./scripts/run-buzz-sample.sh --setup          # Linux
+.\scripts\Run-BuzzSample.ps1 -ForceSetup      # Windows/macOS
 ```
 
 ### Cleanup (return to a completely clean state)
@@ -71,8 +71,8 @@ the local certificate, and deletes `buzz-config.json`.
 
 **Linux**:
 ```bash
-chmod +x scripts/cleanup.sh
-./scripts/cleanup.sh
+chmod +x scripts/cleanup-buzz-sample.sh
+./scripts/cleanup-buzz-sample.sh
 ```
 
 **Windows / macOS**:
@@ -254,7 +254,7 @@ Or, to use the OS certificate store instead of a PEM file (recommended):
 Then run:
 
 ```bash
-dotnet run        # or: ./scripts/run.sh
+dotnet run        # or: ./scripts/run-buzz-sample.sh
 ```
 
 ---

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# run.sh — Entry-point for BuzzApiSample on Linux.
+# run-buzz-sample.sh — Entry-point for BuzzApiSample on Linux.
 #
 # If setup has not been done (buzz-config.json is missing or the certificate is
 # not installed), the setup script is run interactively first.  Then the sample
 # is started with `dotnet run`.
 #
 # Usage:
-#   ./scripts/run.sh
+#   ./scripts/run-buzz-sample.sh
 #
 # To force re-running setup even if it was already completed:
-#   ./scripts/run.sh --setup
+#   ./scripts/run-buzz-sample.sh --setup
 #
 # Requires: dotnet (https://learn.microsoft.com/dotnet/core/install/linux)
 

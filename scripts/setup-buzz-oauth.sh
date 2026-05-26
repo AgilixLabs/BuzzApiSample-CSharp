@@ -69,14 +69,16 @@ SERVER_URL=""
 CONFIG_OUTPUT="${PROJECT_ROOT}/buzz-config.json"
 STORE_LOCATION="CurrentUser"
 KEY_BITS=2048
+STORE_LOCATION_GIVEN=false
+KEY_BITS_GIVEN=false
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while getopts ":s:o:l:b:h" opt; do
     case "$opt" in
         s) SERVER_URL="$OPTARG"     ;;
         o) CONFIG_OUTPUT="$OPTARG"  ;;
-        l) STORE_LOCATION="$OPTARG" ;;
-        b) KEY_BITS="$OPTARG"       ;;
+        l) STORE_LOCATION="$OPTARG"; STORE_LOCATION_GIVEN=true ;;
+        b) KEY_BITS="$OPTARG"; KEY_BITS_GIVEN=true ;;
         h) sed -n '2,/^[^#]/{ s/^# \{0,1\}//; p }' "$0"; exit 0 ;;
         :) printf 'Error: -%s requires an argument\n' "$OPTARG" >&2; exit 1 ;;
         ?) printf 'Error: unknown option -%s\n' "$OPTARG"        >&2; exit 1 ;;
@@ -88,10 +90,8 @@ case "$STORE_LOCATION" in
     *) printf 'Error: -l must be CurrentUser or LocalMachine\n' >&2; exit 1 ;;
 esac
 
-if [ "$STORE_LOCATION" = "LocalMachine" ] && [ "$(id -u)" -ne 0 ]; then
-    printf 'Error: LocalMachine store requires root.  Run with sudo.\n' >&2
-    exit 1
-fi
+# Root check for LocalMachine is deferred until after the interactive store
+# location prompt below, so it catches both flag-supplied and user-entered values.
 
 # ── Dependency check ──────────────────────────────────────────────────────────
 MISSING_DEPS=0
@@ -284,27 +284,58 @@ fi
 SERVER_URL="${SERVER_URL%/}"  # strip trailing slash
 ok "  Server: $SERVER_URL"
 
-# ── Step 2: Application info ──────────────────────────────────────────────────
-section "Step 2: Application Information"
+# ── Step 2: Certificate store location ───────────────────────────────────────
+section "Step 2: Certificate Store Location"
+printf 'The private key is stored in the OS certificate store so it\n'
+printf 'never exists as a plaintext file.\n\n'
+printf '  CurrentUser  — for interactive users and per-user services (default)\n'
+printf '  LocalMachine — for services running as root (requires sudo)\n\n'
+if ! $STORE_LOCATION_GIVEN; then
+    while true; do
+        printf 'Store location [CurrentUser/LocalMachine] (default: CurrentUser): '
+        read -r store_input
+        if [ -z "$store_input" ]; then
+            STORE_LOCATION="CurrentUser"; break
+        fi
+        case "$store_input" in
+            CurrentUser|LocalMachine) STORE_LOCATION="$store_input"; break ;;
+            *) printf "  Please enter 'CurrentUser' or 'LocalMachine'.\n" ;;
+        esac
+    done
+fi
+if [ "$STORE_LOCATION" = "LocalMachine" ] && [ "$(id -u)" -ne 0 ]; then
+    printf 'Error: LocalMachine store requires root.  Run with sudo.\n' >&2
+    exit 1
+fi
+ok "  Store: $STORE_LOCATION"
+
+# ── Step 3: Application info ──────────────────────────────────────────────────
+section "Step 3: Application Information"
 printf 'This is included in the User-Agent header so Agilix support\n'
 printf 'can identify your integration if you need help.\n\n'
 prompt_required "Your contact info (name, email, or URL)" CONTACT_INFO
 prompt_required "Application name (e.g. SisSync, RosterImport)" APP_NAME
 
-# ── Step 3: Admin login ───────────────────────────────────────────────────────
-section "Step 3: Admin Login"
+# ── Step 4: Admin login ───────────────────────────────────────────────────────
+section "Step 4: Admin Login"
 printf 'Log in as a Buzz administrator to perform the one-time setup.\n'
 printf 'This session is used only during setup and is not stored anywhere.\n\n'
 
-prompt_required "Admin userspace (domain slug, e.g. myschool)" ADMIN_USERSPACE
-prompt_required "Admin username"                                ADMIN_USERNAME
-prompt_password "Admin password"                                ADMIN_PASSWORD
+while true; do
+    printf 'Admin username (userspace/username, e.g. myschool/admin): '
+    read -r ADMIN_LOGIN
+    if printf '%s' "$ADMIN_LOGIN" | grep -qE '^[^/]+/[^/]+$'; then
+        break
+    fi
+    printf '  Username must be in userspace/username format.\n'
+done
+prompt_password "Admin password" ADMIN_PASSWORD
 
 printf 'Logging in...'
 
 LOGIN_BODY=$(json_build \
     "request.cmd"      "login3" \
-    "request.username" "${ADMIN_USERSPACE}/${ADMIN_USERNAME}" \
+    "request.username" "$ADMIN_LOGIN" \
     "request.password" "$ADMIN_PASSWORD")
 
 LOGIN_RESPONSE=$(buzz_post "login3" "$LOGIN_BODY")
@@ -345,8 +376,8 @@ ADMIN_TOKEN=$(json_get "$LOGIN_RESPONSE" "response.user.token")
 
 ok " OK"
 
-# ── Step 4: Application Identity account ─────────────────────────────────────
-section "Step 4: Application Identity Account"
+# ── Step 5: Application Identity account ─────────────────────────────────────
+section "Step 5: Application Identity Account"
 printf 'This Buzz user account represents your application.\n'
 printf 'It authenticates via OAuth only — it has no password.\n\n'
 
@@ -365,31 +396,75 @@ if printf '%s' "$CREATE_NEW" | grep -qiE '^y'; then
 
     if [ "$DOMAIN_CODE" = "OK" ]; then
         printf ' done\n\n'
-        printf 'Available domains:\n'
-        # Print domain ID and name side by side; handle both array and single-object responses
+
+        # Build a numbered list of domains for the user to choose from
+        DOMAIN_IDS=()
+        DOMAIN_NAMES=()
         if [ "$USE_JQ" -eq 1 ]; then
-            printf '%s' "$DOMAINS_RESPONSE" | \
-                jq -r '.response.domains.domain | if type == "array" then .[] else . end | "  \(.domainid)  \(.name)"' \
-                2>/dev/null || true
+            while IFS= read -r line; do
+                DOMAIN_IDS+=("$line")
+            done < <(printf '%s' "$DOMAINS_RESPONSE" | \
+                jq -r '.response.domains.domain | if type == "array" then .[] else . end | .domainid' \
+                2>/dev/null || true)
+            while IFS= read -r line; do
+                DOMAIN_NAMES+=("$line")
+            done < <(printf '%s' "$DOMAINS_RESPONSE" | \
+                jq -r '.response.domains.domain | if type == "array" then .[] else . end | .name' \
+                2>/dev/null || true)
         else
-            python3 - "$DOMAINS_RESPONSE" <<'PYEOF'
+            while IFS= read -r line; do
+                DOMAIN_IDS+=("$line")
+            done < <(python3 - "$DOMAINS_RESPONSE" <<'PYEOF'
 import sys, json
 try:
     data = json.loads(sys.argv[1])
     domains = data.get('response', {}).get('domains', {}).get('domain', [])
     if isinstance(domains, dict): domains = [domains]
     for d in domains:
-        print('  {:<30}  {}'.format(d.get('domainid',''), d.get('name','')))
+        print(d.get('domainid', ''))
 except Exception:
     pass
 PYEOF
+)
+            while IFS= read -r line; do
+                DOMAIN_NAMES+=("$line")
+            done < <(python3 - "$DOMAINS_RESPONSE" <<'PYEOF'
+import sys, json
+try:
+    data = json.loads(sys.argv[1])
+    domains = data.get('response', {}).get('domains', {}).get('domain', [])
+    if isinstance(domains, dict): domains = [domains]
+    for d in domains:
+        print(d.get('name', ''))
+except Exception:
+    pass
+PYEOF
+)
         fi
-        printf '\n'
+
+        if [ "${#DOMAIN_IDS[@]}" -gt 0 ]; then
+            printf 'Available domains:\n'
+            for i in "${!DOMAIN_IDS[@]}"; do
+                printf '  %2d. %-30s (id: %s)\n' "$((i+1))" "${DOMAIN_NAMES[$i]}" "${DOMAIN_IDS[$i]}"
+            done
+            printf '\n'
+            printf 'Enter domain number or type the domainid directly: '
+            read -r domain_choice
+            if printf '%s' "$domain_choice" | grep -qE '^[0-9]+$' \
+               && [ "$domain_choice" -ge 1 ] \
+               && [ "$domain_choice" -le "${#DOMAIN_IDS[@]}" ] 2>/dev/null; then
+                TARGET_DOMAIN="${DOMAIN_IDS[$((domain_choice-1))]}"
+            else
+                TARGET_DOMAIN="$domain_choice"
+            fi
+        else
+            prompt_required "Domain ID for the new account (e.g. //myschool)" TARGET_DOMAIN
+        fi
     else
         printf ' (could not fetch domains)\n\n'
+        prompt_required "Domain ID for the new account (e.g. //myschool)" TARGET_DOMAIN
     fi
 
-    prompt_required "Domain ID for the new account (e.g. //myschool)" TARGET_DOMAIN
     prompt_required "Username for the account (e.g. sis-sync)"        APP_USERNAME
     prompt_required "First name (e.g. SIS)"                           APP_FIRSTNAME
     prompt_required "Last name (e.g. Sync)"                           APP_LASTNAME
@@ -446,8 +521,24 @@ else
     ok "  Using existing account: $OAUTH_USER_ID"
 fi
 
-# ── Step 5: RSA key pair + certificate ───────────────────────────────────────
-section "Step 5: RSA Key Generation and Certificate Store Import"
+# ── Step 6: RSA key pair + certificate ───────────────────────────────────────
+section "Step 6: RSA Key Generation and Certificate Store Import"
+
+# Interactive key size prompt when not provided via -b flag
+if ! $KEY_BITS_GIVEN; then
+    while true; do
+        printf 'RSA key size in bits [2048/3072/4096] (default: 2048): '
+        read -r size_input
+        if [ -z "$size_input" ]; then
+            KEY_BITS=2048; break
+        fi
+        if printf '%s' "$size_input" | grep -qE '^[0-9]+$' \
+           && [ "$size_input" -ge 2048 ] && [ "$size_input" -le 16384 ] 2>/dev/null; then
+            KEY_BITS="$size_input"; break
+        fi
+        printf '  Key size must be between 2048 and 16384 bits.\n'
+    done
+fi
 
 # Suggest a kid based on current quarter
 CURRENT_YEAR=$(date -u '+%Y')
@@ -533,8 +624,8 @@ ok " done"
 info "Thumbprint: $THUMBPRINT"
 info "Stored at : ${STORE_DIR}/${THUMBPRINT}.pfx"
 
-# ── Step 6: Register the public key with Buzz ─────────────────────────────────
-section "Step 6: Registering Public Key with Buzz"
+# ── Step 7: Register the public key with Buzz ─────────────────────────────────
+section "Step 7: Registering Public Key with Buzz"
 
 KEY_URL="${SERVER_URL}/api/users/${OAUTH_USER_ID}/keys/${KID}"
 info "PUT $KEY_URL"
@@ -560,8 +651,8 @@ case "$HTTP_CODE" in
         ;;
 esac
 
-# ── Step 7: Write buzz-config.json ────────────────────────────────────────────
-section "Step 7: Writing Configuration"
+# ── Step 8: Write buzz-config.json ────────────────────────────────────────────
+section "Step 8: Writing Configuration"
 
 python3 - "$SERVER_URL" "$CONTACT_INFO" "$APP_NAME" "$OAUTH_USER_ID" \
           "$KID" "$THUMBPRINT" "$STORE_LOCATION" "$CONFIG_OUTPUT" <<'PYEOF'
