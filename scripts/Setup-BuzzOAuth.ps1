@@ -186,8 +186,10 @@ while ($null -eq $adminToken) {
         }
     }
     $adminPassSec  = Read-Host "Admin password" -AsSecureString
-    $adminPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPassSec))
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPassSec)
+    $adminPassword = $null
+    try     { $adminPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
     Write-Host ""
 
     Write-Host "Logging in..." -NoNewline
@@ -317,7 +319,7 @@ if ([string]::IsNullOrEmpty($contactInformation))     { throw "Contact informati
 if ([string]::IsNullOrEmpty($applicationInformation)) { throw "Application name is required." }
 Write-Host ""
 
-# ── Step 4: Application Identity account ─────────────────────────────────────
+# ── Step 5: Application Identity account ─────────────────────────────────────
 Write-Host "─── Step 5: Application Identity Account ──────────────────" -ForegroundColor Yellow
 Write-Host "This is the Buzz user account that represents your application."
 Write-Host "It authenticates via OAuth only — it has no password."

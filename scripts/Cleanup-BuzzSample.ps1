@@ -104,8 +104,10 @@ while ($null -eq $AdminToken) {
         }
     }
     $adminPass = Read-Host 'Admin password' -AsSecureString
-    $adminPassPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPass))
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPass)
+    $adminPassPlain = $null
+    try     { $adminPassPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 
     Write-Host 'Logging in...' -NoNewline
 
