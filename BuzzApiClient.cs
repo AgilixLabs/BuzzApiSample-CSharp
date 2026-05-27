@@ -317,7 +317,7 @@ namespace BuzzAPISample
             }
 
             HttpContent? content = json is null ? null : new StringContent(json.ToJsonString(), Encoding.UTF8, "application/json");
-            HttpResponseMessage response = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
+            using HttpResponseMessage response = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
             JsonNode? responseNode = JsonNode.Parse(await response.Content.ReadAsStreamAsync(cancel));
             TraceResponse(responseNode);
 
@@ -338,8 +338,8 @@ namespace BuzzAPISample
                 {
                     return responseNode;
                 }
-                response = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
-                responseNode = JsonNode.Parse(await response.Content.ReadAsStreamAsync(cancel));
+                using HttpResponseMessage retryResponse = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
+                responseNode = JsonNode.Parse(await retryResponse.Content.ReadAsStreamAsync(cancel));
                 TraceResponse(responseNode);
             }
             return responseNode;
@@ -448,7 +448,7 @@ namespace BuzzAPISample
                 new KeyValuePair<string, string>("client_assertion",      assertion),
             });
 
-            HttpResponseMessage response = await _httpClient.PostAsync(_oauthTokenEndpoint, formContent, cancel);
+            using HttpResponseMessage response = await _httpClient.PostAsync(_oauthTokenEndpoint, formContent, cancel);
 
             if (!response.IsSuccessStatusCode)
             {

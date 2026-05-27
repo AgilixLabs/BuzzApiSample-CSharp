@@ -490,7 +490,7 @@ Write-Host ""
 Write-Host "Generating key..." -NoNewline
 
 # Generate RSA key
-$rsa = [System.Security.Cryptography.RSA]::Create($KeySize)
+$rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider($KeySize)
 
 # Build a self-signed certificate as a container for the key.
 # CertificateRequest is available in .NET Framework 4.7.2+ (included in Windows 11).
@@ -513,10 +513,15 @@ if ($IsWindows) {
     $pfxBytes = $cert.Export(
         [System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12, "")
     $cert.Dispose()
+    $keySetFlag = if ($StoreLocation -eq 'LocalMachine') {
+        [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::MachineKeySet
+    } else {
+        [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet
+    }
     $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
         $pfxBytes, "",
         [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet -bor
-        [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet
+        $keySetFlag
     )
 }
 

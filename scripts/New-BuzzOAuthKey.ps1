@@ -70,7 +70,8 @@ if ((Test-Path $privateKeyPath) -or (Test-Path $publicKeyPath)) {
 if ($PSVersionTable.PSVersion.Major -ge 7) {
     Write-Host "Generating $KeySize-bit RSA key pair using .NET APIs..."
 
-    $rsa = [System.Security.Cryptography.RSA]::Create($KeySize)
+    $rsa = [System.Security.Cryptography.RSA]::Create()
+    $rsa.KeySize = $KeySize
     try {
         [System.IO.File]::WriteAllText($privateKeyPath, $rsa.ExportRSAPrivateKeyPem())
         [System.IO.File]::WriteAllText($publicKeyPath,  $rsa.ExportSubjectPublicKeyInfoPem())

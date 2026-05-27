@@ -100,7 +100,7 @@ if $FORCE_SETUP || ! setup_complete; then
         chmod +x "$SETUP_SCRIPT"
     fi
 
-    bash "$SETUP_SCRIPT" "$@" || {
+    bash "$SETUP_SCRIPT" || {
         printf '\nSetup did not complete.  Exiting.\n' >&2
         exit 1
     }
