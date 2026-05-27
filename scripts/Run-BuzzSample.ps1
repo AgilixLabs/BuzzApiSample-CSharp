@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Entry-point for BuzzApiSample on Windows and macOS.
+    Entry-point for BuzzApiSample on Windows.
 
 .DESCRIPTION
     If setup has not been done (buzz-config.json is missing or the certificate is

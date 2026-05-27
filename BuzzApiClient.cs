@@ -84,6 +84,7 @@ namespace BuzzAPISample
         {
             _logger = logger;
 
+            serverUrl = serverUrl.TrimEnd('/');
             ServerUrl = serverUrl;
             UserAgent = userAgent;
             Verbose = verbose;
@@ -124,6 +125,7 @@ namespace BuzzAPISample
                 throw new Exception("userspace, username, and password are required for auto login");
             }
 
+            serverUrl = serverUrl.TrimEnd('/');
             ServerUrl = serverUrl;
             UserAgent = userAgent;
             Verbose = verbose;
@@ -187,6 +189,7 @@ namespace BuzzAPISample
             if (privateKey is null)
                 throw new ArgumentNullException(nameof(privateKey));
 
+            serverUrl = serverUrl.TrimEnd('/');
             ServerUrl = serverUrl;
             UserAgent = userAgent;
             Verbose = verbose;
@@ -320,7 +323,7 @@ namespace BuzzAPISample
                 }
             }
 
-            HttpContent? content = json is null ? null : new StringContent(json.ToJsonString(), Encoding.UTF8, "application/json");
+            using HttpContent? content = json is null ? null : new StringContent(json.ToJsonString(), Encoding.UTF8, "application/json");
             using HttpResponseMessage response = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
             JsonNode? responseNode = JsonNode.Parse(await response.Content.ReadAsStreamAsync(cancel));
             TraceResponse(responseNode);
@@ -368,7 +371,7 @@ namespace BuzzAPISample
                 HttpResponseMessage? response = null;
                 try
                 {
-                    HttpRequestMessage httpRequestMessage = new(httpMethod, requestUri);
+                    using HttpRequestMessage httpRequestMessage = new(httpMethod, requestUri);
                     if (_oauthEnabled && includeToken && Token is not null)
                     {
                         httpRequestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token);
@@ -384,7 +387,14 @@ namespace BuzzAPISample
 
                     TraceRequest(requestUri, content);
 
-                    response = await _httpClient.SendAsync(httpRequestMessage, cancel);
+                    try
+                    {
+                        response = await _httpClient.SendAsync(httpRequestMessage, cancel);
+                    }
+                    finally
+                    {
+                        httpRequestMessage.Content = null; // detach shared content; caller owns its lifecycle
+                    }
                     retryHeader = response.Headers.RetryAfter;
 
                     // API Time/Rate Limiting: 429 Too Many Requests (and 503 Service Unavailable) with Retry-After / X-RateLimit-* headers
@@ -548,7 +558,7 @@ namespace BuzzAPISample
             if (found.Count == 0)
                 throw new InvalidOperationException(
                     $"Certificate with thumbprint '{thumbprint}' not found in the {storeLocation}/My store. " +
-                    "Run .\\scripts\\Setup-BuzzOAuth.ps1 to install it.");
+                    "Run the setup script to install it.");
             return found[0];
         }
 

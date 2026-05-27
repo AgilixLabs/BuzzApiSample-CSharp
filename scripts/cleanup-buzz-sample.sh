@@ -23,11 +23,14 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG_FILE="$PROJECT_ROOT/buzz-config.json"
 
 # ── Platform check ────────────────────────────────────────────────────────────
-if [[ "$(uname -s)" != "Linux" ]]; then
-    printf 'This script is for Linux only.\n' >&2
-    printf 'On Windows/macOS, run: .\\scripts\\Cleanup-BuzzSample.ps1\n' >&2
-    exit 1
-fi
+case "$(uname -s)" in
+    Linux|Darwin) ;;
+    *)
+        printf 'This script is for Linux and macOS only.\n' >&2
+        printf 'On Windows, run: .\\scripts\\Cleanup-BuzzSample.ps1\n' >&2
+        exit 1
+        ;;
+esac
 
 # ── Dependency checks ─────────────────────────────────────────────────────────
 for cmd in curl python3; do

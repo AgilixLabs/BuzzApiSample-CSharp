@@ -13,8 +13,10 @@
 #   -h            Show this help
 #
 # What this script does:
-#   1. Prompts for your Buzz server URL, contact info, and application name.
-#   2. Logs in as a Buzz administrator (supports MFA).
+#   1. Prompts for the Buzz server URL and logs in as a Buzz administrator
+#      (supports MFA).  Verifying credentials early means mistakes are caught
+#      before any other information has been entered.
+#   2. Prompts for certificate store location, contact info, and application name.
 #   3. Creates (or reuses) an Application Identity account in Buzz — the OAuth
 #      identity of your integration, with no password and no interactive login.
 #   4. Generates an RSA key pair.
@@ -27,14 +29,13 @@
 # Requires:
 #   openssl   — key generation and certificate operations
 #   curl      — Buzz API calls
-#   python3   — JSON building and parsing (standard on modern Linux)
-#   jq        — optional; used for JSON if available (apt install jq / yum install jq)
+#   python3   — JSON building and parsing (standard on modern Linux/macOS)
+#   jq        — optional; used for JSON if available (apt install jq / brew install jq)
 #
 # Platform:
-#   Linux only.  On macOS, use scripts/Setup-BuzzOAuth.ps1 instead (the .NET Keychain
-#   API on macOS requires the .NET runtime to drive the import).
+#   Linux and macOS.  On Windows, use scripts/Setup-BuzzOAuth.ps1 instead.
 #
-# .NET certificate store on Linux:
+# .NET certificate store on Linux/macOS:
 #   CurrentUser  — ~/.dotnet/corefx/cryptography/x509stores/my/
 #   LocalMachine — /etc/dotnet/corefx/cryptography/x509stores/my/  (requires root)
 #
@@ -56,11 +57,14 @@
 set -euo pipefail
 
 # ── Platform check ────────────────────────────────────────────────────────────
-if [ "$(uname -s)" != "Linux" ]; then
-    printf 'Error: this script is for Linux.\n' >&2
-    printf 'On macOS, use: pwsh scripts/Setup-BuzzOAuth.ps1\n' >&2
-    exit 1
-fi
+case "$(uname -s)" in
+    Linux|Darwin) ;;
+    *)
+        printf 'Error: this script is for Linux and macOS only.\n' >&2
+        printf 'On Windows, use: .\\scripts\\Setup-BuzzOAuth.ps1\n' >&2
+        exit 1
+        ;;
+esac
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -332,40 +336,8 @@ fi
 SERVER_URL="${SERVER_URL%/}"  # strip trailing slash
 ok "  Server: $SERVER_URL"
 
-# ── Step 2: Certificate store location ───────────────────────────────────────
-section "Step 2: Certificate Store Location"
-printf 'The private key is stored in the OS certificate store so it\n'
-printf 'never exists as a plaintext file.\n\n'
-printf '  CurrentUser  — for interactive users and per-user services (default)\n'
-printf '  LocalMachine — for services running as root (requires sudo)\n\n'
-if ! $STORE_LOCATION_GIVEN; then
-    while true; do
-        printf 'Store location [CurrentUser/LocalMachine] (default: CurrentUser): '
-        read -r store_input
-        if [ -z "$store_input" ]; then
-            STORE_LOCATION="CurrentUser"; break
-        fi
-        case "$store_input" in
-            CurrentUser|LocalMachine) STORE_LOCATION="$store_input"; break ;;
-            *) printf "  Please enter 'CurrentUser' or 'LocalMachine'.\n" ;;
-        esac
-    done
-fi
-if [ "$STORE_LOCATION" = "LocalMachine" ] && [ "$(id -u)" -ne 0 ]; then
-    printf 'Error: LocalMachine store requires root.  Run with sudo.\n' >&2
-    exit 1
-fi
-ok "  Store: $STORE_LOCATION"
-
-# ── Step 3: Application info ──────────────────────────────────────────────────
-section "Step 3: Application Information"
-printf 'This is included in the User-Agent header so Agilix support\n'
-printf 'can identify your integration if you need help.\n\n'
-prompt_required "Your contact info (name, email, or URL)" CONTACT_INFO
-prompt_required "Application name (e.g. SisSync, RosterImport)" APP_NAME
-
-# ── Step 4: Admin login ───────────────────────────────────────────────────────
-section "Step 4: Admin Login"
+# ── Step 2: Admin login ───────────────────────────────────────────────────────
+section "Step 2: Admin Login"
 printf 'Log in as a Buzz administrator to perform the one-time setup.\n'
 printf 'This session is used only during setup and is not stored anywhere.\n\n'
 
@@ -447,6 +419,38 @@ while [ -z "$ADMIN_TOKEN" ]; do
     ADMIN_TOKEN="$CANDIDATE_TOKEN"
 done
 ok " OK"
+
+# ── Step 3: Certificate store location ───────────────────────────────────────
+section "Step 3: Certificate Store Location"
+printf 'The private key is stored in the OS certificate store so it\n'
+printf 'never exists as a plaintext file.\n\n'
+printf '  CurrentUser  — for interactive users and per-user services (default)\n'
+printf '  LocalMachine — for services running as root (requires sudo)\n\n'
+if ! $STORE_LOCATION_GIVEN; then
+    while true; do
+        printf 'Store location [CurrentUser/LocalMachine] (default: CurrentUser): '
+        read -r store_input
+        if [ -z "$store_input" ]; then
+            STORE_LOCATION="CurrentUser"; break
+        fi
+        case "$store_input" in
+            CurrentUser|LocalMachine) STORE_LOCATION="$store_input"; break ;;
+            *) printf "  Please enter 'CurrentUser' or 'LocalMachine'.\n" ;;
+        esac
+    done
+fi
+if [ "$STORE_LOCATION" = "LocalMachine" ] && [ "$(id -u)" -ne 0 ]; then
+    printf 'Error: LocalMachine store requires root.  Run with sudo.\n' >&2
+    exit 1
+fi
+ok "  Store: $STORE_LOCATION"
+
+# ── Step 4: Application info ──────────────────────────────────────────────────
+section "Step 4: Application Information"
+printf 'This is included in the User-Agent header so Agilix support\n'
+printf 'can identify your integration if you need help.\n\n'
+prompt_required "Your contact info (name, email, or URL)" CONTACT_INFO
+prompt_required "Application name (e.g. SisSync, RosterImport)" APP_NAME
 
 # ── Step 5: Application Identity account ─────────────────────────────────────
 section "Step 5: Application Identity Account"

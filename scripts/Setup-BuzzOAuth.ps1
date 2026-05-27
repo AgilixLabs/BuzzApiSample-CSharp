@@ -7,16 +7,16 @@
     or integration to the Buzz API using OAuth 2.0 JWT client credentials.
 
     What this script does:
-      1. Prompts for your Buzz server URL, contact info, and application name.
-      2. Logs in as a Buzz administrator to perform the one-time setup operations.
-         Handles MFA if your admin account requires it.
+      1. Prompts for the Buzz server URL and logs in as a Buzz administrator.
+         Verifying credentials early means mistakes are caught before any other
+         information has been entered.  Handles MFA if required.
+      2. Prompts for certificate store location, contact info, and application name.
       3. Creates (or reuses) an Application Identity user account in Buzz.
          This account is the OAuth identity of your integration — it has no password
          and cannot be used for interactive login.
       4. Generates a 2048-bit RSA key pair.
       5. Wraps the private key in a self-signed certificate and imports it into the
-         OS certificate store (Windows Certificate Store / macOS Keychain / Linux dotnet
-         store) so the application can use it as a background service without any
+         Windows Certificate Store so the application can use it as a background service without any
          plaintext key files.
       6. Registers the public key with Buzz.
       7. Writes buzz-config.json in the project root with all values filled in,
@@ -169,41 +169,8 @@ $ServerUrl = $ServerUrl.TrimEnd('/')
 Write-Host "  Server: $ServerUrl" -ForegroundColor Green
 Write-Host ""
 
-# ── Step 2: Certificate store ─────────────────────────────────────────────────
-Write-Host "─── Step 2: Certificate Store Location ────────────────────" -ForegroundColor Yellow
-Write-Host "The private key is stored in the OS certificate store so it"
-Write-Host "never exists as a plaintext file."
-Write-Host ""
-Write-Host "  CurrentUser  — for interactive users and per-user services (default)"
-Write-Host "  LocalMachine — for Windows services running as SYSTEM or a service account"
-Write-Host "                 (requires running this script as Administrator)"
-Write-Host ""
-if (-not $PSBoundParameters.ContainsKey('StoreLocation')) {
-    while ($true) {
-        $storeInput = (Read-Host "Store location [CurrentUser/LocalMachine] (default: CurrentUser)").Trim()
-        if ([string]::IsNullOrEmpty($storeInput)) { $StoreLocation = "CurrentUser"; break }
-        if ($storeInput -eq "CurrentUser" -or $storeInput -eq "LocalMachine") {
-            $StoreLocation = $storeInput; break
-        }
-        Write-Host "  Please enter 'CurrentUser' or 'LocalMachine'." -ForegroundColor Yellow
-    }
-}
-Write-Host "  Store: $StoreLocation" -ForegroundColor Green
-Write-Host ""
-
-# ── Step 3: Application info ──────────────────────────────────────────────────
-Write-Host "─── Step 3: Application Information ──────────────────────" -ForegroundColor Yellow
-Write-Host "This is included in the User-Agent header so Agilix support"
-Write-Host "can identify your integration if you need help."
-Write-Host ""
-$contactInformation     = (Read-Host "Your contact info (name, email, or URL)").Trim()
-$applicationInformation = (Read-Host "Application name (e.g. SisSync, RosterImport)").Trim()
-if ([string]::IsNullOrEmpty($contactInformation))     { throw "Contact information is required." }
-if ([string]::IsNullOrEmpty($applicationInformation)) { throw "Application name is required." }
-Write-Host ""
-
-# ── Step 4: Admin login ───────────────────────────────────────────────────────
-Write-Host "─── Step 4: Admin Login ───────────────────────────────────" -ForegroundColor Yellow
+# ── Step 2: Admin login ───────────────────────────────────────────────────────
+Write-Host "─── Step 2: Admin Login ───────────────────────────────────" -ForegroundColor Yellow
 Write-Host "Log in as a Buzz administrator who has rights to create users"
 Write-Host "and register OAuth keys.  This session is used only during setup"
 Write-Host "and is not stored anywhere."
@@ -315,6 +282,39 @@ while ($null -eq $adminToken) {
     $adminToken = $candidateToken
 }
 Write-Host " OK" -ForegroundColor Green
+Write-Host ""
+
+# ── Step 3: Certificate store ─────────────────────────────────────────────────
+Write-Host "─── Step 3: Certificate Store Location ────────────────────" -ForegroundColor Yellow
+Write-Host "The private key is stored in the OS certificate store so it"
+Write-Host "never exists as a plaintext file."
+Write-Host ""
+Write-Host "  CurrentUser  — for interactive users and per-user services (default)"
+Write-Host "  LocalMachine — for Windows services running as SYSTEM or a service account"
+Write-Host "                 (requires running this script as Administrator)"
+Write-Host ""
+if (-not $PSBoundParameters.ContainsKey('StoreLocation')) {
+    while ($true) {
+        $storeInput = (Read-Host "Store location [CurrentUser/LocalMachine] (default: CurrentUser)").Trim()
+        if ([string]::IsNullOrEmpty($storeInput)) { $StoreLocation = "CurrentUser"; break }
+        if ($storeInput -eq "CurrentUser" -or $storeInput -eq "LocalMachine") {
+            $StoreLocation = $storeInput; break
+        }
+        Write-Host "  Please enter 'CurrentUser' or 'LocalMachine'." -ForegroundColor Yellow
+    }
+}
+Write-Host "  Store: $StoreLocation" -ForegroundColor Green
+Write-Host ""
+
+# ── Step 4: Application info ──────────────────────────────────────────────────
+Write-Host "─── Step 4: Application Information ──────────────────────" -ForegroundColor Yellow
+Write-Host "This is included in the User-Agent header so Agilix support"
+Write-Host "can identify your integration if you need help."
+Write-Host ""
+$contactInformation     = (Read-Host "Your contact info (name, email, or URL)").Trim()
+$applicationInformation = (Read-Host "Application name (e.g. SisSync, RosterImport)").Trim()
+if ([string]::IsNullOrEmpty($contactInformation))     { throw "Contact information is required." }
+if ([string]::IsNullOrEmpty($applicationInformation)) { throw "Application name is required." }
 Write-Host ""
 
 # ── Step 4: Application Identity account ─────────────────────────────────────
@@ -479,7 +479,8 @@ Write-Host "Generating key..." -NoNewline
 if ($IsWindows) {
     $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider($KeySize)
 } else {
-    $rsa = [System.Security.Cryptography.RSA]::Create($KeySize)
+    $rsa = [System.Security.Cryptography.RSA]::Create()
+    $rsa.KeySize = $KeySize
 }
 
 # Build a self-signed certificate as a container for the key.

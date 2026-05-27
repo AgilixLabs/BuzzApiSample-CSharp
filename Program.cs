@@ -26,9 +26,9 @@ namespace BuzzAPISample
             if (fileCfg is null)
                 throw new FileNotFoundException(
                     "buzz-config.json not found.\n" +
-                    "  Linux  : ./scripts/run-buzz-sample.sh\n" +
-                    "  Windows: .\\scripts\\Run-BuzzSample.ps1\n" +
-                    "  Manual : see README.md");
+                    "  Linux/macOS: ./scripts/run-buzz-sample.sh\n" +
+                    "  Windows    : .\\scripts\\Run-BuzzSample.ps1\n" +
+                    "  Manual     : see README.md");
 
             string serverUrl              = fileCfg["serverUrl"]?.ToString()              ?? throw new InvalidOperationException("'serverUrl' missing from buzz-config.json");
             string contactInformation     = fileCfg["contactInformation"]?.ToString()     ?? string.Empty;

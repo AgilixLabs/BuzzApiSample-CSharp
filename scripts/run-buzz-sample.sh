@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-buzz-sample.sh — Entry-point for BuzzApiSample on Linux.
+# run-buzz-sample.sh — Entry-point for BuzzApiSample on Linux and macOS.
 #
 # If setup has not been done (buzz-config.json is missing or the certificate is
 # not installed), the setup script is run interactively first.  Then the sample
@@ -11,7 +11,7 @@
 # To force re-running setup even if it was already completed:
 #   ./scripts/run-buzz-sample.sh --setup
 #
-# Requires: dotnet (https://learn.microsoft.com/dotnet/core/install/linux)
+# Requires: dotnet (https://learn.microsoft.com/dotnet/core/install/)
 
 set -euo pipefail
 
