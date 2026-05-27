@@ -149,21 +149,6 @@ function Export-SpkiPem([System.Security.Cryptography.RSA] $rsaKey) {
     return $sb.ToString()
 }
 
-# ── Helper: Buzz API call ─────────────────────────────────────────────────────
-function Invoke-BuzzCmd {
-    param(
-        [string]    $Url,
-        [string]    $Cmd,
-        [hashtable] $Body  = @{},
-        [string]    $Token = ""
-    )
-    $payload = @{ request = ($Body + @{ cmd = $Cmd }) }
-    $headers = @{ "Content-Type" = "application/json" }
-    if ($Token) { $headers["Authorization"] = "Bearer $Token" }
-    $json = $payload | ConvertTo-Json -Depth 10
-    return Invoke-RestMethod -Uri "$Url/cmd/$Cmd" -Method Post -Headers $headers -Body $json -UseBasicParsing
-}
-
 function Get-BuzzCode([psobject] $response) {
     # Buzz responses nest the code under .response.code or directly under .code
     if ($null -ne $response.response -and $null -ne $response.response.code) {
@@ -175,11 +160,12 @@ function Get-BuzzCode([psobject] $response) {
 # ── Step 1: Server URL ────────────────────────────────────────────────────────
 Write-Host "─── Step 1: Buzz Server URL ───────────────────────────────" -ForegroundColor Yellow
 if ([string]::IsNullOrEmpty($ServerUrl)) {
-    $ServerUrl = (Read-Host "Buzz API server URL (e.g. https://api.agilixbuzz.com)").Trim().TrimEnd('/')
+    $ServerUrl = (Read-Host "Buzz API server URL (e.g. https://api.agilixbuzz.com)").Trim()
 }
 if ([string]::IsNullOrEmpty($ServerUrl)) {
     throw "Server URL is required."
 }
+$ServerUrl = $ServerUrl.TrimEnd('/')
 Write-Host "  Server: $ServerUrl" -ForegroundColor Green
 Write-Host ""
 
@@ -490,7 +476,11 @@ Write-Host ""
 Write-Host "Generating key..." -NoNewline
 
 # Generate RSA key
-$rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider($KeySize)
+if ($IsWindows) {
+    $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider($KeySize)
+} else {
+    $rsa = [System.Security.Cryptography.RSA]::Create($KeySize)
+}
 
 # Build a self-signed certificate as a container for the key.
 # CertificateRequest is available in .NET Framework 4.7.2+ (included in Windows 11).
@@ -508,8 +498,8 @@ $cert      = $certReq.CreateSelfSigned($notBefore, $notAfter)
 if ($IsWindows) {
     # Re-create from PFX with PersistKeySet so the CNG key is stored permanently
     # and is accessible by background services.
-    # Remove X509KeyStorageFlags::PrivateKeyExportable below if you want the key
-    # to be non-exportable (more secure but prevents backup/migration).
+    # The key is non-exportable by default. Add X509KeyStorageFlags::PrivateKeyExportable
+    # to the flags below if you need to back up or migrate the private key (less secure).
     $pfxBytes = $cert.Export(
         [System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12, "")
     $cert.Dispose()

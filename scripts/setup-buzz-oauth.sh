@@ -197,31 +197,6 @@ PYEOF
     fi
 }
 
-# Extract all values of a field from an array at a given path (one per line).
-# json_get_array_field '{"items":[{"id":1},{"id":2}]}' 'items' 'id'  →  1\n2
-json_get_array_field() {
-    local json="$1" array_path="$2" field="$3"
-    if [ "$USE_JQ" -eq 1 ]; then
-        printf '%s' "$json" | jq -r ".${array_path}[] | .${field}" 2>/dev/null || true
-    else
-        python3 - "$json" "$array_path" "$field" <<'PYEOF'
-import sys, json
-try:
-    data = json.loads(sys.argv[1])
-    arr = data
-    for key in sys.argv[2].split('.'):
-        arr = arr.get(key) if isinstance(arr, dict) else None
-    if isinstance(arr, dict): arr = [arr]  # single item not wrapped in array
-    for item in (arr or []):
-        val = item.get(sys.argv[3])
-        if val is not None:
-            print(val)
-except Exception:
-    pass
-PYEOF
-    fi
-}
-
 # Safely build a JSON body from key=value pairs using python3.
 # json_build key1 val1 key2 val2 ...
 # Nested keys use dot notation: json_build request.cmd login3 request.username admin

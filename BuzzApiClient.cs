@@ -101,6 +101,7 @@ namespace BuzzAPISample
             _oauthEnabled = false;
             _oauthUserId = string.Empty;
             _oauthKid = string.Empty;
+            _oauthRsa = null;
             _oauthTokenEndpoint = string.Empty;
         }
 
@@ -132,6 +133,7 @@ namespace BuzzAPISample
             _httpClient.DefaultRequestHeaders.Add("User-Agent", UserAgent);
             _httpClient.Timeout = TimeSpan.FromMilliseconds(Timeout);
 
+            _logger = null;
             _autoLoginEnabled = true;
             _autoLoginUserspace = userspace;
             _autoLoginUsername = username;
@@ -140,6 +142,7 @@ namespace BuzzAPISample
             _oauthEnabled = false;
             _oauthUserId = string.Empty;
             _oauthKid = string.Empty;
+            _oauthRsa = null;
             _oauthTokenEndpoint = string.Empty;
         }
 
@@ -193,6 +196,7 @@ namespace BuzzAPISample
             _httpClient.DefaultRequestHeaders.Add("User-Agent", UserAgent);
             _httpClient.Timeout = TimeSpan.FromMilliseconds(Timeout);
 
+            _logger = null;
             _autoLoginEnabled = false;
             _autoLoginUserspace = string.Empty;
             _autoLoginUsername = string.Empty;

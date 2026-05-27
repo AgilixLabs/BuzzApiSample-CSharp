@@ -75,17 +75,6 @@ if d is not None:
     fi
 }
 
-json_build() {
-    python3 -c "
-import sys, json
-args = sys.argv[1:]
-d = {}
-for i in range(0, len(args), 2):
-    d[args[i]] = args[i+1]
-print(json.dumps(d), end='')
-" "$@"
-}
-
 # Parse a scalar field from a Buzz API response — handles both JSON and XML.
 # Usage: buzz_get_field <response_text> <field>
 # Supported fields: code  token  partial_token  message
