@@ -139,12 +139,16 @@ try {
     $framework = $null
     if ($csproj) {
         [xml]$proj = Get-Content $csproj.FullName -Raw
-        $tfs = $proj.Project.PropertyGroup.TargetFrameworks
-        if (-not $tfs) { $tfs = $proj.Project.PropertyGroup.TargetFramework }
+        $tfsNode = $proj.SelectSingleNode('/Project/PropertyGroup/TargetFrameworks')
+        $tfs = if ($null -ne $tfsNode) { $tfsNode.InnerText } else { $null }
+        if (-not $tfs) {
+            $tfsNode = $proj.SelectSingleNode('/Project/PropertyGroup/TargetFramework')
+            $tfs = if ($null -ne $tfsNode) { $tfsNode.InnerText } else { $null }
+        }
         if ($tfs) {
             $nets = $tfs -split ';' |
                     Where-Object { $_ -match '^net\d' } |
-                    Sort-Object { [version]([regex]::Match($_, '[\d.]+').Value) } |
+                    Sort-Object { $m = [regex]::Match($_, '[\d.]+'); if ($m.Success) { [version]$m.Value } else { [version]'0.0' } } |
                     Select-Object -Last 1
             $framework = $nets
         }

@@ -326,7 +326,7 @@ namespace BuzzAPISample
 
             using HttpContent? content = json is null ? null : new StringContent(json.ToJsonString(), Encoding.UTF8, "application/json");
             using HttpResponseMessage response = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
-            JsonNode? responseNode = JsonNode.Parse(await response.Content.ReadAsStreamAsync(cancel));
+            JsonNode? responseNode = await JsonNode.ParseAsync(await response.Content.ReadAsStreamAsync(cancel), cancellationToken: cancel);
             TraceResponse(responseNode);
 
             // If the token expired or was revoked, re-authenticate and retry the request once
@@ -348,7 +348,7 @@ namespace BuzzAPISample
                 }
                 // content is StringContent (ByteArrayContent-backed) so its stream rewinds on re-read — safe to reuse.
                 using HttpResponseMessage retryResponse = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
-                responseNode = JsonNode.Parse(await retryResponse.Content.ReadAsStreamAsync(cancel));
+                responseNode = await JsonNode.ParseAsync(await retryResponse.Content.ReadAsStreamAsync(cancel), cancellationToken: cancel);
                 TraceResponse(responseNode);
             }
             return responseNode;
@@ -473,7 +473,7 @@ namespace BuzzAPISample
                 throw new Exception($"OAuth token request failed ({response.StatusCode}): {body}");
             }
 
-            JsonNode? tokenJson = JsonNode.Parse(await response.Content.ReadAsStreamAsync(cancel));
+            JsonNode? tokenJson = await JsonNode.ParseAsync(await response.Content.ReadAsStreamAsync(cancel), cancellationToken: cancel);
             string? accessToken = tokenJson?["access_token"]?.ToString();
 
             if (string.IsNullOrEmpty(accessToken))
@@ -491,6 +491,8 @@ namespace BuzzAPISample
                         expiresIn = parsed;
                 }
             }
+            if (expiresIn <= 0)
+                expiresIn = 3600;
             Token = accessToken;
             _oauthTokenExpiry = DateTimeOffset.UtcNow.AddSeconds(expiresIn);
 
@@ -589,7 +591,7 @@ namespace BuzzAPISample
             if (retryHeader is not null)
             {
                 if (retryHeader.Delta is not null)
-                    waitFromRetryAfterMs = (int)retryHeader.Delta.Value.TotalMilliseconds;
+                    waitFromRetryAfterMs = (int)Math.Min(retryHeader.Delta.Value.TotalMilliseconds, int.MaxValue);
                 else if (retryHeader.Date is not null)
                     waitFromRetryAfterMs = Math.Max(0, (int)(retryHeader.Date.Value - DateTime.UtcNow).TotalMilliseconds);
             }
@@ -623,7 +625,7 @@ namespace BuzzAPISample
                 if (retryHeader.Delta is not null)
                     actualMs = Math.Max(actualMs, retryHeader.Delta.Value.TotalMilliseconds);
                 else if (retryHeader.Date is not null)
-                    actualMs = Math.Max(actualMs, (retryHeader.Date.Value - DateTime.UtcNow).TotalMilliseconds);
+                    actualMs = Math.Max(actualMs, Math.Max(0, (retryHeader.Date.Value - DateTime.UtcNow).TotalMilliseconds));
             }
             else
                 actualMs = Math.Min(_maxRetryWaitDuration.TotalMilliseconds, actualMs + Random.Shared.Next(1, 1000));
@@ -691,7 +693,8 @@ namespace BuzzAPISample
         {
             if (json is not null)
             {
-                _logger?.LogDebug("Response with json content: {Content}", json.ToString());
+                string text = json.ToString();
+                _logger?.LogDebug("Response with json content: {Content}", text[..Math.Min(text.Length, 1000)]);
             }
             else
             {

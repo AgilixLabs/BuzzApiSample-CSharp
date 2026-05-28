@@ -123,7 +123,7 @@ while ($null -eq $AdminToken) {
     $loginResp = $null
     try {
         $loginResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/login3" `
-            -ContentType 'application/json' -Body $loginBody -ErrorAction Stop
+            -ContentType 'application/json' -Body $loginBody -UseBasicParsing -ErrorAction Stop
     } catch {
         Write-Host ''
         Write-Host "  Network error: $_" -ForegroundColor Red
@@ -153,8 +153,9 @@ while ($null -eq $AdminToken) {
 
         try {
             $loginResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/verifylogin" `
-                -ContentType 'application/json' -Body $mfaBody -ErrorAction Stop
+                -ContentType 'application/json' -Body $mfaBody -UseBasicParsing -ErrorAction Stop
         } catch {
+            $mfaBody = $null
             Write-Host ''
             Write-Host "  MFA request failed: $_" -ForegroundColor Red
             Write-Host '  Please try again.  Press Ctrl+C to abort.' -ForegroundColor Yellow

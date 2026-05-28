@@ -85,7 +85,12 @@ fi
 printf 'Generating %d-bit RSA key pair...\n' "$KEY_BITS"
 
 # Generate private key (PKCS#8 format via genpkey, widely supported)
+# Set umask 077 so the key file is created 600 from the start, avoiding a
+# window between creation and the explicit chmod where the file is world-readable.
+old_umask=$(umask)
+umask 077
 openssl genpkey -algorithm RSA -pkeyopt "rsa_keygen_bits:${KEY_BITS}" -out "$PRIV_KEY"
+umask "$old_umask"
 [ -s "$PRIV_KEY" ] || { printf 'Error: failed to generate RSA private key.\n' >&2; exit 1; }
 chmod 600 "$PRIV_KEY"
 

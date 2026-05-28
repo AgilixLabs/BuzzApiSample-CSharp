@@ -205,11 +205,13 @@ while ($null -eq $adminToken) {
     $loginResult = $null
     try {
         $loginResult = Invoke-RestMethod `
-            -Uri         "$ServerUrl/cmd/login3" `
-            -Method      Post `
-            -ContentType "application/json" `
-            -Body        $loginBody
+            -Uri             "$ServerUrl/cmd/login3" `
+            -Method          Post `
+            -ContentType     "application/json" `
+            -Body            $loginBody `
+            -UseBasicParsing
     } catch {
+        $loginBody = $null
         Write-Host ""
         Write-Host "  Network error: $_" -ForegroundColor Red
         Write-Host "  Please check the server URL and try again.  Press Ctrl+C to abort." -ForegroundColor Yellow
@@ -239,11 +241,13 @@ while ($null -eq $adminToken) {
 
         try {
             $loginResult = Invoke-RestMethod `
-                -Uri         "$ServerUrl/cmd/$mfaCmd" `
-                -Method      Post `
-                -ContentType "application/json" `
-                -Body        $mfaBody
+                -Uri             "$ServerUrl/cmd/$mfaCmd" `
+                -Method          Post `
+                -ContentType     "application/json" `
+                -Body            $mfaBody `
+                -UseBasicParsing
         } catch {
+            $mfaBody = $null
             Write-Host ""
             Write-Host "  MFA request failed: $_" -ForegroundColor Red
             Write-Host "  Please try again.  Press Ctrl+C to abort." -ForegroundColor Yellow
@@ -350,9 +354,10 @@ if ($createNew -eq "Y") {
     Write-Host "Fetching available domains..." -NoNewline
     try {
         $domainsResult = Invoke-RestMethod `
-            -Uri     "$ServerUrl/cmd/getdomains" `
-            -Method  Get `
-            -Headers @{ Authorization = "Bearer $adminToken" }
+            -Uri             "$ServerUrl/cmd/getdomains" `
+            -Method          Get `
+            -Headers         @{ Authorization = "Bearer $adminToken" } `
+            -UseBasicParsing
         Write-Host " done" -ForegroundColor Green
 
         $domains = @()
@@ -418,11 +423,12 @@ if ($createNew -eq "Y") {
 
     try {
         $createResult = Invoke-RestMethod `
-            -Uri         "$ServerUrl/cmd/createusers2" `
-            -Method      Post `
-            -Headers     @{ Authorization = "Bearer $adminToken" } `
-            -ContentType "application/json" `
-            -Body        $createBody
+            -Uri             "$ServerUrl/cmd/createusers2" `
+            -Method          Post `
+            -Headers         @{ Authorization = "Bearer $adminToken" } `
+            -ContentType     "application/json" `
+            -Body            $createBody `
+            -UseBasicParsing
     } catch {
         Write-Host ""
         throw "CreateUsers2 request failed: $_"
@@ -554,7 +560,7 @@ $rsa.Dispose()
 if ($IsLinux) {
     $storeDir = Join-Path $env:HOME ".dotnet/corefx/cryptography/x509stores/my"
     if (Test-Path $storeDir) {
-        & chmod 700 $storeDir 2>$null
+        & chmod 700 $storeDir 2>&1 | Out-Null
         Write-Host ""
         Write-Host "NOTE (Linux): Tightened cert store permissions: chmod 700 $storeDir" -ForegroundColor Yellow
         Write-Host "  Ensure the service account running your app owns that directory."

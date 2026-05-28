@@ -72,7 +72,7 @@ case "$(uname -s)" in
 esac
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SERVER_URL=""
 CONFIG_OUTPUT="${PROJECT_ROOT}/buzz-config.json"
@@ -123,6 +123,8 @@ command -v jq &>/dev/null && USE_JQ=1
 
 # ── Temporary workspace (cleaned up on exit) ──────────────────────────────────
 TMPDIR_SETUP="$(mktemp -d 2>/dev/null || mktemp -d -t buzz-oauth)"
+[ -d "$TMPDIR_SETUP" ] || die "Failed to create temporary directory."
+chmod 700 "$TMPDIR_SETUP"
 trap 'rm -rf "$TMPDIR_SETUP"' EXIT
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -528,7 +530,7 @@ if not results:
 for r in results:
     if r: print(r)
 PYEOF
-)
+) || true
         while IFS= read -r line; do
             DOMAIN_NAMES+=("$line")
         done < <(printf '%s' "$DOMAINS_RESPONSE" | python3 - name <<'PYEOF'
@@ -552,7 +554,7 @@ if not results:
 for r in results:
     if r: print(r)
 PYEOF
-)
+) || true
 
         if [ "${#DOMAIN_IDS[@]}" -gt 0 ]; then
             printf 'Available domains:\n'
