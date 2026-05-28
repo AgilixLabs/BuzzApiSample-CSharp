@@ -41,8 +41,8 @@
 #
 #   The store is a directory of PKCS#12 (.pfx) files.  The .NET runtime discovers
 #   certificates by scanning that directory; the filename is the SHA-1 thumbprint.
-#   After setup, the private key lives only in that directory and in the ephemeral
-#   tmpfs used during this script (cleaned up on exit).
+#   After setup, the private key lives only in that directory and in the temporary
+#   directory used during this script (cleaned up on exit).
 #
 # Service account deployments:
 #   Run this script AS the service account user (or sudo -u serviceuser) so the
@@ -83,7 +83,7 @@ while getopts ":s:o:l:b:h" opt; do
         o) CONFIG_OUTPUT="$OPTARG"  ;;
         l) STORE_LOCATION="$OPTARG"; STORE_LOCATION_GIVEN=true ;;
         b) KEY_BITS="$OPTARG"; KEY_BITS_GIVEN=true ;;
-        h) sed -n '2,/^[^#]/{ s/^# \{0,1\}//; p }' "$0"; exit 0 ;;
+        h) sed -n '2,/^[^#]/{ /^[^#]/q; s/^# \{0,1\}//; p }' "$0"; exit 0 ;;
         :) printf 'Error: -%s requires an argument\n' "$OPTARG" >&2; exit 1 ;;
         ?) printf 'Error: unknown option -%s\n' "$OPTARG"        >&2; exit 1 ;;
     esac

@@ -120,7 +120,11 @@ Push-Location $ProjectRoot
 try {
     # Pick the highest netX.Y framework in the .csproj so no script update is
     # needed when a new SDK year is added to TargetFrameworks.
-    $csproj = Get-ChildItem -Path $ProjectRoot -Filter '*.csproj' -Recurse -Depth 1 |
+    $csproj = Get-ChildItem -Path $ProjectRoot -Filter '*.csproj' -Recurse -File |
+              Where-Object {
+                  $rel = $_.FullName.Substring($ProjectRoot.Length).TrimStart('\', '/')
+                  ($rel -split '[\\/]').Count -le 2
+              } |
               Select-Object -First 1
     $framework = $null
     if ($csproj) {
