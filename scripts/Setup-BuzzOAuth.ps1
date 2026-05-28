@@ -22,7 +22,7 @@
       7. Writes buzz-config.json in the project root with all values filled in,
          so `dotnet run` works immediately.
 
-    Requires: Windows PowerShell 5.1 or PowerShell 7+.
+    Requires: Windows PowerShell 5.1.
     On Windows 11 the required .NET Framework 4.8 is already installed.
 
 .PARAMETER ServerUrl
@@ -200,6 +200,7 @@ while ($null -eq $adminToken) {
             password = $adminPassword
         }
     } | ConvertTo-Json -Depth 5
+    $adminPassword = $null
 
     $loginResult = $null
     try {
@@ -207,8 +208,7 @@ while ($null -eq $adminToken) {
             -Uri         "$ServerUrl/cmd/login3" `
             -Method      Post `
             -ContentType "application/json" `
-            -Body        $loginBody `
-            -UseBasicParsing
+            -Body        $loginBody
     } catch {
         Write-Host ""
         Write-Host "  Network error: $_" -ForegroundColor Red
@@ -216,6 +216,7 @@ while ($null -eq $adminToken) {
         Write-Host ""
         continue
     }
+    $loginBody = $null
 
     $loginCode = Get-BuzzCode $loginResult
 
@@ -234,14 +235,14 @@ while ($null -eq $adminToken) {
                 code  = $mfaCode
             }
         } | ConvertTo-Json -Depth 5
+        $partialToken = $null
 
         try {
             $loginResult = Invoke-RestMethod `
                 -Uri         "$ServerUrl/cmd/$mfaCmd" `
                 -Method      Post `
                 -ContentType "application/json" `
-                -Body        $mfaBody `
-                -UseBasicParsing
+                -Body        $mfaBody
         } catch {
             Write-Host ""
             Write-Host "  MFA request failed: $_" -ForegroundColor Red
@@ -249,6 +250,7 @@ while ($null -eq $adminToken) {
             Write-Host ""
             continue
         }
+        $mfaBody = $null
         $loginCode = Get-BuzzCode $loginResult
     }
 
@@ -339,8 +341,7 @@ if ($useExisting -eq "Y") {
         $domainsResult = Invoke-RestMethod `
             -Uri     "$ServerUrl/cmd/getdomains" `
             -Method  Get `
-            -Headers @{ Authorization = "Bearer $adminToken" } `
-            -UseBasicParsing
+            -Headers @{ Authorization = "Bearer $adminToken" }
         Write-Host " done" -ForegroundColor Green
 
         $domains = @()
@@ -410,8 +411,7 @@ if ($useExisting -eq "Y") {
             -Method      Post `
             -Headers     @{ Authorization = "Bearer $adminToken" } `
             -ContentType "application/json" `
-            -Body        $createBody `
-            -UseBasicParsing
+            -Body        $createBody
     } catch {
         Write-Host ""
         throw "CreateUsers2 request failed: $_"
@@ -558,8 +558,7 @@ try {
         -Method      Put `
         -Headers     @{ Authorization = "Bearer $adminToken" } `
         -ContentType "application/x-pem-file" `
-        -Body        ([System.Text.Encoding]::UTF8.GetBytes($publicKeyPem)) `
-        -UseBasicParsing
+        -Body        ([System.Text.Encoding]::UTF8.GetBytes($publicKeyPem))
 } catch {
     Write-Host ""
     $sc = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $null }

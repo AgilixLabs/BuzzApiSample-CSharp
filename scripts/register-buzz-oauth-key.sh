@@ -96,7 +96,7 @@ URL="${SERVER_URL}/api/users/${USER_ID}/keys/${KID}"
 printf 'Registering public key...\n'
 printf '  URL  : %s\n' "$URL"
 printf '  Kid  : %s\n' "$KID"
-printf '  File : %s\n' "$(realpath "$PUBLIC_KEY_PATH")"
+printf '  File : %s\n' "$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$PUBLIC_KEY_PATH")"
 printf '\n'
 
 # Capture HTTP status code alongside response body
@@ -108,7 +108,7 @@ http_response=$(curl -s -w '\n%{http_code}' \
     ${CURL_OPTS:-})
 
 http_code=$(printf '%s' "$http_response" | tail -n1)
-response_body=$(printf '%s' "$http_response" | head -n -1)
+response_body=$(printf '%s' "$http_response" | sed '$d')
 
 case "$http_code" in
     204)

@@ -234,11 +234,13 @@ body = {
 }
 print(json.dumps(body), end='')
 " "$ADMIN_USERNAME" "$ADMIN_PASSWORD")"
+    ADMIN_PASSWORD=""
 
     login_response="$(curl -sL -X POST \
         -H "Content-Type: application/json" \
         --data-raw "$login_body" \
         "${SERVER_URL}/cmd/login3" ${CURL_OPTS:-} || true)"
+    login_body=""
 
     if [ -z "$login_response" ]; then
         printf '\n  Network error: could not reach server.\n'
@@ -268,11 +270,13 @@ body = {
 }
 print(json.dumps(body), end='')
 " "$mfa_token" "$MFA_CODE")"
+        mfa_token=""
 
         login_response="$(curl -sL -X POST \
             -H "Content-Type: application/json" \
             --data-raw "$mfa_body" \
             "${SERVER_URL}/cmd/verifylogin" ${CURL_OPTS:-} || true)"
+        mfa_body=""
 
         if [ -z "$login_response" ]; then
             printf '  MFA request failed: network error.  Press Ctrl+C to abort.\n\n'
@@ -315,7 +319,7 @@ if [ -n "$OAUTH_KID" ]; then
         ${CURL_OPTS:-})"
 
     key_http_code="$(printf '%s' "$key_response" | tail -n1)"
-    key_body="$(printf '%s' "$key_response" | head -n -1)"
+    key_body="$(printf '%s' "$key_response" | sed '$d')"
 
     case "$key_http_code" in
         204|200)

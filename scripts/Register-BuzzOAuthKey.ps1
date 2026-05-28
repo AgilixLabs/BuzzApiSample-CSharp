@@ -52,9 +52,11 @@
 
 .EXAMPLE
     # Store the admin token in a variable first to avoid it appearing in shell history
-    $token = Read-Host -AsSecureString "Admin Bearer token"
-    $plainToken = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($token))
+    $tokenSec = Read-Host -AsSecureString "Admin Bearer token"
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($tokenSec)
+    $plainToken = $null
+    try     { $plainToken = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
     .\scripts\Register-BuzzOAuthKey.ps1 -ServerUrl https://api.agilixbuzz.com `
         -AdminToken $plainToken -UserId 12345678 -Kid "2025-q2" -PublicKeyPath .\public_key.pem
 
@@ -112,8 +114,7 @@ try {
         -Method          Put `
         -Headers         @{ Authorization = "Bearer $AdminToken" } `
         -ContentType     "application/x-pem-file" `
-        -Body            ([System.Text.Encoding]::UTF8.GetBytes($publicKeyPem)) `
-        -UseBasicParsing
+        -Body            ([System.Text.Encoding]::UTF8.GetBytes($publicKeyPem))
 
     if ($response.StatusCode -eq 204) {
         Write-Host "Public key registered successfully (HTTP 204)."

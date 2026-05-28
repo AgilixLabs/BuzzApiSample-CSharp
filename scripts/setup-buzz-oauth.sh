@@ -359,8 +359,10 @@ while [ -z "$ADMIN_TOKEN" ]; do
         "request.cmd"      "login3" \
         "request.username" "$ADMIN_LOGIN" \
         "request.password" "$ADMIN_PASSWORD")
+    ADMIN_PASSWORD=""
 
     LOGIN_RESPONSE=$(buzz_post "login3" "$LOGIN_BODY" 2>/dev/null || true)
+    LOGIN_BODY=""
 
     if [ -z "$LOGIN_RESPONSE" ]; then
         printf '\n  Network error: could not reach server.\n'
@@ -387,8 +389,10 @@ while [ -z "$ADMIN_TOKEN" ]; do
             "request.cmd"   "$MFA_CMD" \
             "request.token" "$PARTIAL_TOKEN" \
             "request.code"  "$MFA_CODE")
+        PARTIAL_TOKEN=""
 
         LOGIN_RESPONSE=$(buzz_post "$MFA_CMD" "$MFA_BODY" 2>/dev/null || true)
+        MFA_BODY=""
 
         if [ -z "$LOGIN_RESPONSE" ]; then
             printf '  MFA request failed: network error.  Press Ctrl+C to abort.\n\n'

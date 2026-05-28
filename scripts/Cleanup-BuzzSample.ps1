@@ -118,11 +118,12 @@ while ($null -eq $AdminToken) {
             password = $adminPassPlain
         }
     } | ConvertTo-Json -Depth 5
+    $adminPassPlain = $null
 
     $loginResp = $null
     try {
         $loginResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/login3" `
-            -ContentType 'application/json' -Body $loginBody -UseBasicParsing -ErrorAction Stop
+            -ContentType 'application/json' -Body $loginBody -ErrorAction Stop
     } catch {
         Write-Host ''
         Write-Host "  Network error: $_" -ForegroundColor Red
@@ -130,6 +131,7 @@ while ($null -eq $AdminToken) {
         Write-Host ''
         continue
     }
+    $loginBody = $null
 
     $loginCode = Get-JsonProp (Get-JsonProp $loginResp 'response') 'code'
     if (-not $loginCode) { $loginCode = Get-JsonProp $loginResp 'code' }
@@ -147,10 +149,11 @@ while ($null -eq $AdminToken) {
                 code  = $mfaCode
             }
         } | ConvertTo-Json -Depth 5
+        $mfaToken = $null
 
         try {
             $loginResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/verifylogin" `
-                -ContentType 'application/json' -Body $mfaBody -UseBasicParsing -ErrorAction Stop
+                -ContentType 'application/json' -Body $mfaBody -ErrorAction Stop
         } catch {
             Write-Host ''
             Write-Host "  MFA request failed: $_" -ForegroundColor Red
@@ -158,6 +161,7 @@ while ($null -eq $AdminToken) {
             Write-Host ''
             continue
         }
+        $mfaBody = $null
 
         $loginCode = Get-JsonProp (Get-JsonProp $loginResp 'response') 'code'
         if (-not $loginCode) { $loginCode = Get-JsonProp $loginResp 'code' }
@@ -195,7 +199,7 @@ if ($OAuthKid) {
     $keyUrl = "$ServerUrl/api/users/$OAuthUserId/keys/$OAuthKid"
     try {
         $keyResp = Invoke-WebRequest -Method Delete -Uri $keyUrl `
-            -Headers @{ Authorization = "Bearer $AdminToken" } -UseBasicParsing -ErrorAction Stop
+            -Headers @{ Authorization = "Bearer $AdminToken" } -ErrorAction Stop
         Write-Host "OAuth key deleted (HTTP $($keyResp.StatusCode))."
     } catch {
         $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $null }

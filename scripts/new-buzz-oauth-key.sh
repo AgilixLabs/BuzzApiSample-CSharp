@@ -85,8 +85,8 @@ openssl pkey -in "$PRIV_KEY" -pubout -out "$PUB_KEY" 2>/dev/null
 chmod 600 "$PRIV_KEY"
 
 printf '\nRSA key pair generated (%d bits):\n' "$KEY_BITS"
-printf '  Private key : %s\n' "$(realpath "$PRIV_KEY")"
-printf '  Public key  : %s\n' "$(realpath "$PUB_KEY")"
+printf '  Private key : %s\n' "$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$PRIV_KEY")"
+printf '  Public key  : %s\n' "$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$PUB_KEY")"
 printf '\n'
 printf 'Next step: register the public key with Buzz.\n'
 printf '  ./scripts/register-buzz-oauth-key.sh \\\n'

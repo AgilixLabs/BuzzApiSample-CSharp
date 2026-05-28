@@ -88,7 +88,7 @@ After cleanup you can run the setup again from scratch.
 
 If you prefer to run setup separately without immediately launching the sample:
 
-**Linux** (bash, requires `openssl curl python3`):
+**Linux / macOS** (bash, requires `openssl curl python3`):
 ```bash
 chmod +x scripts/setup-buzz-oauth.sh
 ./scripts/setup-buzz-oauth.sh
@@ -105,7 +105,7 @@ certificate lands in the right home directory:
 sudo -u buzzservice ./scripts/setup-buzz-oauth.sh
 ```
 
-**Windows / macOS** (PowerShell 7+):
+**Windows** (PowerShell 5.1):
 ```powershell
 .\scripts\Setup-BuzzOAuth.ps1
 # For Windows services (run as Administrator):
@@ -113,8 +113,8 @@ sudo -u buzzservice ./scripts/setup-buzz-oauth.sh
 ```
 
 The setup script:
-1. Prompts for your server URL, contact info, and application name
-2. Logs you in as an admin (supports MFA)
+1. Prompts for your server URL and logs you in as an admin (supports MFA)
+2. Prompts for cert store location, contact info, and application name
 3. Creates an Application Identity account (or reuses an existing one)
 4. Generates an RSA key pair and stores the private key in the OS certificate store
    — no plaintext key files left on disk after setup
