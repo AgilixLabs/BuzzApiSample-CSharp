@@ -12,19 +12,18 @@
 #   -b BITS       RSA key size in bits (default: 2048; 3072 or 4096 recommended for new keys)
 #   -h            Show this help
 #
-# What this script does:
-#   1. Prompts for the Buzz server URL and logs in as a Buzz administrator
-#      (supports MFA).  Verifying credentials early means mistakes are caught
-#      before any other information has been entered.
-#   2. Prompts for certificate store location, contact info, and application name.
-#   3. Creates (or reuses) an Application Identity account in Buzz — the OAuth
+# What this script does (Steps 1–8):
+#   1. Prompts for the Buzz server URL.
+#   2. Logs in as a Buzz administrator (supports MFA).  Credentials are verified
+#      early so mistakes are caught before any other information is entered.
+#   3. Prompts for certificate store location (CurrentUser or LocalMachine).
+#   4. Prompts for contact info and application name.
+#   5. Creates (or reuses) an Application Identity account in Buzz — the OAuth
 #      identity of your integration, with no password and no interactive login.
-#   4. Generates an RSA key pair.
-#   5. Wraps the private key in a self-signed certificate and imports it into the
-#      .NET certificate store on this machine so the application can use it as a
-#      background service with no plaintext key files remaining on disk.
-#   6. Registers the public key with Buzz.
-#   7. Writes buzz-config.json so `dotnet run` works immediately.
+#   6. Generates an RSA key pair and imports the private key into the .NET
+#      certificate store — no plaintext key files remain on disk.
+#   7. Registers the public key with Buzz.
+#   8. Writes buzz-config.json so `dotnet run` works immediately.
 #
 # Requires:
 #   openssl   — key generation and certificate operations

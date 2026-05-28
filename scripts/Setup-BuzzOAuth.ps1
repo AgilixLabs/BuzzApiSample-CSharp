@@ -6,20 +6,20 @@
     Walks you through the one-time setup needed to authenticate a background service
     or integration to the Buzz API using OAuth 2.0 JWT client credentials.
 
-    What this script does:
-      1. Prompts for the Buzz server URL and logs in as a Buzz administrator.
-         Verifying credentials early means mistakes are caught before any other
-         information has been entered.  Handles MFA if required.
-      2. Prompts for certificate store location, contact info, and application name.
-      3. Creates (or reuses) an Application Identity user account in Buzz.
+    What this script does (Steps 1–8):
+      1. Prompts for the Buzz server URL.
+      2. Logs in as a Buzz administrator (supports MFA).  Credentials are verified
+         early so mistakes are caught before any other information is entered.
+      3. Prompts for certificate store location (CurrentUser or LocalMachine).
+      4. Prompts for contact info and application name.
+      5. Creates (or reuses) an Application Identity user account in Buzz.
          This account is the OAuth identity of your integration — it has no password
          and cannot be used for interactive login.
-      4. Generates a 2048-bit RSA key pair.
-      5. Wraps the private key in a self-signed certificate and imports it into the
-         Windows Certificate Store so the application can use it as a background service without any
-         plaintext key files.
-      6. Registers the public key with Buzz.
-      7. Writes buzz-config.json in the project root with all values filled in,
+      6. Generates an RSA key pair and wraps the private key in a self-signed
+         certificate imported into the Windows Certificate Store — no plaintext
+         key files remain on disk.
+      7. Registers the public key with Buzz.
+      8. Writes buzz-config.json in the project root with all values filled in,
          so `dotnet run` works immediately.
 
     Requires: Windows PowerShell 5.1.
