@@ -2,11 +2,12 @@
 # register-buzz-oauth-key.sh — Register an RSA public key with Buzz for OAuth 2.0 authentication.
 #
 # Usage:
-#   ./scripts/register-buzz-oauth-key.sh -s SERVER_URL -t ADMIN_TOKEN -u USER_ID -k KID -p PUBLIC_KEY_PATH
+#   ./scripts/register-buzz-oauth-key.sh -s SERVER_URL -u USER_ID -k KID -p PUBLIC_KEY_PATH
 #
 # Options:
 #   -s URL    Buzz API server URL, e.g. https://api.agilixbuzz.com  (no trailing slash)
-#   -t TOKEN  Bearer token for an account with Update User rights on the Application Identity account
+#   -t TOKEN  Bearer token (optional — prefer BUZZ_ADMIN_TOKEN env var or interactive prompt to
+#             avoid exposing the token in shell history and process listings)
 #   -u ID     userid of the Application Identity account (from OAuth Setup Step 1)
 #   -k KID    Key ID for this key, e.g. "2025-q2".
 #             Allowed characters: ASCII letters, digits, -, _, .  Max 128 chars.
@@ -66,11 +67,23 @@ while getopts ":s:t:u:k:p:h" opt; do
     esac
 done
 
+# ── Resolve admin token ───────────────────────────────────────────────────────
+# Prefer BUZZ_ADMIN_TOKEN env var or interactive prompt over -t to keep the
+# token out of shell history and process listings.
+if [ -z "$ADMIN_TOKEN" ]; then
+    if [ -n "${BUZZ_ADMIN_TOKEN:-}" ]; then
+        ADMIN_TOKEN="$BUZZ_ADMIN_TOKEN"
+    else
+        read -rsp 'Admin Bearer token: ' ADMIN_TOKEN
+        printf '\n'
+    fi
+fi
+
 # ── Validate inputs ───────────────────────────────────────────────────────────
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 
 [ -n "$SERVER_URL" ]      || die "Server URL is required (-s)"
-[ -n "$ADMIN_TOKEN" ]     || die "Admin token is required (-t)"
+[ -n "$ADMIN_TOKEN" ]     || die "Admin token is required (-t, BUZZ_ADMIN_TOKEN, or interactive prompt)"
 [ -n "$USER_ID" ]         || die "User ID is required (-u)"
 [ -n "$KID" ]             || die "Key ID is required (-k)"
 [ -n "$PUBLIC_KEY_PATH" ] || die "Public key path is required (-p)"

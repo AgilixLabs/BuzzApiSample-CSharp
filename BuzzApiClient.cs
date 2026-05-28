@@ -593,7 +593,10 @@ namespace BuzzAPISample
                 if (retryHeader.Delta is not null)
                     waitFromRetryAfterMs = (int)Math.Min(retryHeader.Delta.Value.TotalMilliseconds, int.MaxValue);
                 else if (retryHeader.Date is not null)
-                    waitFromRetryAfterMs = Math.Max(0, (int)(retryHeader.Date.Value - DateTime.UtcNow).TotalMilliseconds);
+                {
+                    double retryAfterMs = (retryHeader.Date.Value - DateTime.UtcNow).TotalMilliseconds;
+                    waitFromRetryAfterMs = (int)Math.Max(0d, Math.Min(retryAfterMs, (double)int.MaxValue));
+                }
             }
             if (waitFromRetryAfterMs > 0)
             {
@@ -681,12 +684,23 @@ namespace BuzzAPISample
 
         private async Task TraceRequestAsync(string requestUri, HttpContent? content)
         {
-            _logger?.LogInformation("Request: {RequestUri}", requestUri);
+            // Strip _token query parameter before logging — password-auth paths append it to the URI.
+            _logger?.LogInformation("Request: {RequestUri}", RedactQueryParam(requestUri, "_token"));
             if (content is StringContent && _logger?.IsEnabled(LogLevel.Debug) == true)
             {
                 string text = await content.ReadAsStringAsync();
                 _logger?.LogDebug("Request content: {Content}", text[..Math.Min(text.Length, 1000)]);
             }
+        }
+
+        private static string RedactQueryParam(string uri, string paramName)
+        {
+            int q = uri.IndexOf('?');
+            if (q < 0) return uri;
+            string[] kept = uri[(q + 1)..].Split('&')
+                .Where(p => !p.StartsWith(paramName + "=", StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            return kept.Length > 0 ? $"{uri[..q]}?{string.Join("&", kept)}" : uri[..q];
         }
 
         private void TraceResponse(JsonNode? json)
