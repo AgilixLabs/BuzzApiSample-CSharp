@@ -101,9 +101,9 @@ if ($ForceSetup -or -not (Test-SetupComplete)) {
     }
     Write-Host ''
 
-    & $SetupScript
-
-    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+    try {
+        & $SetupScript
+    } catch {
         Write-Error 'Setup did not complete.  Exiting.'
         exit 1
     }
