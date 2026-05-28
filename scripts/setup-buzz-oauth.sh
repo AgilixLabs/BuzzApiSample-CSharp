@@ -296,8 +296,8 @@ buzz_post() {
     local cmd="$1" body="$2" token="${3:-}"
     local -a headers=("-H" "Content-Type: application/json")
     [ -n "$token" ] && headers+=("-H" "Authorization: Bearer $token")
-    curl -sL ${CURL_OPTS:-} -X POST "${SERVER_URL}/cmd/${cmd}" \
-        "${headers[@]}" -d "$body"
+    printf '%s' "$body" | curl -sL ${CURL_OPTS:-} -X POST "${SERVER_URL}/cmd/${cmd}" \
+        "${headers[@]}" --data-binary @-
 }
 
 # PUT raw content to a Buzz REST endpoint.

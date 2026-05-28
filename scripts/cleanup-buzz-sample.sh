@@ -241,9 +241,9 @@ print(json.dumps(body), end='')
 " "$ADMIN_USERNAME" "$ADMIN_PASSWORD")"
     ADMIN_PASSWORD=""
 
-    login_response="$(curl -sL -X POST \
+    login_response="$(printf '%s' "$login_body" | curl -sL -X POST \
         -H "Content-Type: application/json" \
-        --data-raw "$login_body" \
+        --data-binary @- \
         "${SERVER_URL}/cmd/login3" ${CURL_OPTS:-} || true)"
     login_body=""
 
@@ -277,9 +277,9 @@ print(json.dumps(body), end='')
 " "$mfa_token" "$MFA_CODE")"
         mfa_token=""
 
-        login_response="$(curl -sL -X POST \
+        login_response="$(printf '%s' "$mfa_body" | curl -sL -X POST \
             -H "Content-Type: application/json" \
-            --data-raw "$mfa_body" \
+            --data-binary @- \
             "${SERVER_URL}/cmd/verifylogin" ${CURL_OPTS:-} || true)"
         mfa_body=""
 
@@ -360,11 +360,11 @@ body = {
 print(json.dumps(body), end='')
 " "$OAUTH_USER_ID")"
 
-delete_response="$(curl -s -X POST \
+delete_response="$(printf '%s' "$delete_body" | curl -s -X POST \
     "${SERVER_URL}/cmd/deleteusers" \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
-    --data-raw "$delete_body" \
+    --data-binary @- \
     ${CURL_OPTS:-})"
 
 delete_code="$(buzz_get_field "$delete_response" code)"
