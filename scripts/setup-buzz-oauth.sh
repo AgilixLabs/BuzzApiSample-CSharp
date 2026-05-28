@@ -122,7 +122,7 @@ USE_JQ=0
 command -v jq &>/dev/null && USE_JQ=1
 
 # ── Temporary workspace (cleaned up on exit) ──────────────────────────────────
-TMPDIR_SETUP=$(mktemp -d)
+TMPDIR_SETUP="$(mktemp -d 2>/dev/null || mktemp -d -t buzz-oauth)"
 trap 'rm -rf "$TMPDIR_SETUP"' EXIT
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -303,12 +303,17 @@ buzz_post() {
 # PUT raw content to a Buzz REST endpoint.
 buzz_put() {
     local url="$1" content_type="$2" body="$3" token="$4"
-    local result http_code
+    local result http_code curl_exit
+    curl_exit=0
     result=$(curl -s ${CURL_OPTS:-} -w '\n%{http_code}' \
         -X PUT "$url" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: $content_type" \
-        --data-binary "$body")
+        --data-binary "$body") || curl_exit=$?
+    if [ "$curl_exit" -ne 0 ]; then
+        printf '\n' >&2
+        die "Network error reaching $url (curl exit $curl_exit). Check the server URL and connectivity."
+    fi
     http_code=$(printf '%s' "$result" | tail -n1)
     printf '%s' "$http_code"
 }
@@ -651,11 +656,13 @@ PEM_PATH=""
 
 # 1. Generate RSA private key (common to all platforms)
 openssl genpkey -algorithm RSA -pkeyopt "rsa_keygen_bits:${KEY_BITS}" \
-    -out "$PRIV_KEY" 2>/dev/null
+    -out "$PRIV_KEY"
+[ -s "$PRIV_KEY" ] || die "Failed to generate RSA private key."
 chmod 600 "$PRIV_KEY"
 
 # 3. Extract public key in SubjectPublicKeyInfo (SPKI) PEM format — what Buzz expects
-openssl pkey -in "$PRIV_KEY" -pubout -out "$PUB_KEY" 2>/dev/null
+openssl pkey -in "$PRIV_KEY" -pubout -out "$PUB_KEY"
+[ -s "$PUB_KEY" ] || die "Failed to extract RSA public key."
 
 if [ "$(uname -s)" = "Darwin" ]; then
     # macOS: .NET uses the Keychain for X509Store, which requires interactive Security
@@ -687,10 +694,11 @@ else
         -key "$PRIV_KEY" \
         -out "$CERT_PEM" \
         -days 36500 \
-        -subj "/CN=${CERT_CN}" 2>/dev/null
+        -subj "/CN=${CERT_CN}"
+    [ -s "$CERT_PEM" ] || die "Failed to create self-signed certificate."
 
     # 4. Compute the SHA-1 thumbprint (uppercase hex, no colons) — used as the filename in the store
-    THUMBPRINT=$(openssl x509 -in "$CERT_PEM" -fingerprint -sha1 -noout 2>/dev/null \
+    THUMBPRINT=$(openssl x509 -in "$CERT_PEM" -fingerprint -sha1 -noout \
         | sed 's/.*Fingerprint=//' \
         | tr -d ':' \
         | tr '[:lower:]' '[:upper:]')
@@ -708,7 +716,8 @@ else
         -inkey   "$PRIV_KEY" \
         -out     "$PFX_FILE" \
         -passout pass: \
-        $PKCS12_LEGACY_FLAG 2>/dev/null
+        $PKCS12_LEGACY_FLAG
+    [ -s "$PFX_FILE" ] || die "Failed to export PKCS#12 file."
 
     # 6. Install into the .NET certificate store
     case "$STORE_LOCATION" in
