@@ -310,6 +310,14 @@ if (-not $PSBoundParameters.ContainsKey('StoreLocation')) {
 Write-Host "  Store: $StoreLocation" -ForegroundColor Green
 Write-Host ""
 
+if ($StoreLocation -eq 'LocalMachine') {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) {
+        throw "LocalMachine certificate store requires Administrator rights.`nRe-run PowerShell as Administrator and try again."
+    }
+}
+
 # ── Step 4: Application info ──────────────────────────────────────────────────
 Write-Host "─── Step 4: Application Information ──────────────────────" -ForegroundColor Yellow
 Write-Host "This is included in the User-Agent header so Agilix support"
