@@ -16,12 +16,18 @@
 #
 # Getting an admin Bearer token:
 #   If you already have an OAuth application set up, use it.
-#   Otherwise, use the legacy login3 command:
+#   Otherwise, use the legacy login3 command.  Use 'read -rsp' to avoid
+#   exposing the password in shell history or process listings:
 #
-#     TOKEN=$(curl -s -X POST https://api.agilixbuzz.com/cmd/login3 \
-#               -H 'Content-Type: application/json' \
-#               -d '{"request":{"cmd":"login3","username":"myspace/admin","password":"secret"}}' \
-#               | python3 -c "import sys,json; print(json.load(sys.stdin)['response']['user']['token'])")
+#     read -rsp 'Admin password: ' ADMIN_PASS; printf '\n'
+#     TOKEN=$(printf '%s\n%s' "myspace/admin" "$ADMIN_PASS" | python3 -c "
+# import sys, json
+# u, p = sys.stdin.read().splitlines()[:2]
+# print(json.dumps({'request':{'cmd':'login3','username':u,'password':p}}))" | \
+#               curl -s -X POST https://api.agilixbuzz.com/cmd/login3 \
+#                   -H 'Content-Type: application/json' --data-binary @- | \
+#               python3 -c "import sys,json; print(json.load(sys.stdin)['response']['user']['token'])")
+#     ADMIN_PASS=''
 #
 # Requires: curl
 #

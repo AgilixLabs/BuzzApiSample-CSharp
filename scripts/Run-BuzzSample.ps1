@@ -104,7 +104,9 @@ if ($ForceSetup -or -not (Test-SetupComplete)) {
     try {
         & $SetupScript
     } catch {
-        Write-Error 'Setup did not complete.  Exiting.'
+        $setupErrorMessage = $_.Exception.Message
+        if ([string]::IsNullOrWhiteSpace($setupErrorMessage)) { $setupErrorMessage = $_.ToString() }
+        Write-Error ("Setup did not complete.  Exiting.  Underlying error: {0}" -f $setupErrorMessage)
         exit 1
     }
 

@@ -210,7 +210,7 @@ PYEOF
 # json_build key1 val1 key2 val2 ...
 # Nested keys use dot notation: json_build request.cmd login3 request.username admin
 json_build() {
-    python3 - "$@" <<'PYEOF'
+    printf '%s\0' "$@" | python3 - <<'PYEOF'
 import sys, json
 
 def set_nested(d, keys, value):
@@ -218,10 +218,12 @@ def set_nested(d, keys, value):
         d = d.setdefault(k, {})
     d[keys[-1]] = value
 
-args = sys.argv[1:]
+items = sys.stdin.buffer.read().split(b'\x00')
+if items and items[-1] == b'':
+    items = items[:-1]
 result = {}
-for i in range(0, len(args) - 1, 2):
-    set_nested(result, args[i].split('.'), args[i+1])
+for i in range(0, len(items) - 1, 2):
+    set_nested(result, items[i].decode('utf-8').split('.'), items[i+1].decode('utf-8'))
 print(json.dumps(result))
 PYEOF
 }
@@ -231,9 +233,10 @@ PYEOF
 # Supported fields: code  token  partial_token  message  userid
 buzz_get_field() {
     local resp="$1" field="$2"
-    python3 - "$resp" "$field" <<'PYEOF'
+    printf '%s' "$resp" | python3 - "$field" <<'PYEOF'
 import sys
-resp, field = sys.argv[1], sys.argv[2]
+field = sys.argv[1]
+resp = sys.stdin.read()
 result = ''
 try:
     import json
@@ -504,9 +507,10 @@ if printf '%s' "$CREATE_NEW" | grep -qiE '^y'; then
         DOMAIN_NAMES=()
         while IFS= read -r line; do
             DOMAIN_IDS+=("$line")
-        done < <(python3 - "$DOMAINS_RESPONSE" domainid <<'PYEOF'
+        done < <(printf '%s' "$DOMAINS_RESPONSE" | python3 - domainid <<'PYEOF'
 import sys
-resp, field = sys.argv[1], sys.argv[2]
+field = sys.argv[1]
+resp = sys.stdin.read()
 results = []
 try:
     import json
@@ -527,9 +531,10 @@ PYEOF
 )
         while IFS= read -r line; do
             DOMAIN_NAMES+=("$line")
-        done < <(python3 - "$DOMAINS_RESPONSE" name <<'PYEOF'
+        done < <(printf '%s' "$DOMAINS_RESPONSE" | python3 - name <<'PYEOF'
 import sys
-resp, field = sys.argv[1], sys.argv[2]
+field = sys.argv[1]
+resp = sys.stdin.read()
 results = []
 try:
     import json

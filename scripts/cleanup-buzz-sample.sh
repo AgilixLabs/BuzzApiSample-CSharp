@@ -83,9 +83,10 @@ if d is not None:
 # Supported fields: code  token  partial_token  message
 buzz_get_field() {
     local resp="$1" field="$2"
-    python3 - "$resp" "$field" <<'PYEOF'
+    printf '%s' "$resp" | python3 - "$field" <<'PYEOF'
 import sys
-resp, field = sys.argv[1], sys.argv[2]
+field = sys.argv[1]
+resp = sys.stdin.read()
 result = ''
 try:
     import json
