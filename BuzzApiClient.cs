@@ -680,10 +680,10 @@ namespace BuzzAPISample
         private async Task TraceRequestAsync(string requestUri, HttpContent? content)
         {
             _logger?.LogInformation("Request: {RequestUri}", requestUri);
-            if (content is StringContent)
+            if (content is StringContent && _logger?.IsEnabled(LogLevel.Debug) == true)
             {
                 string text = await content.ReadAsStringAsync();
-                _logger?.LogDebug("Request content: {Content}", text[..Math.Min(text.Length, 1000)]);
+                _logger.LogDebug("Request content: {Content}", text[..Math.Min(text.Length, 1000)]);
             }
         }
 

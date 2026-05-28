@@ -39,10 +39,15 @@ $SetupScript = Join-Path $ScriptDir 'Setup-BuzzOAuth.ps1'
 
 # ── Check if setup is complete ────────────────────────────────────────────────
 function Test-SetupComplete {
-    # 1. Config file must exist
+    # 1. Config file must exist and contain valid JSON
     if (-not (Test-Path $ConfigFile)) { return $false }
 
-    $cfg = Get-Content $ConfigFile -Raw | ConvertFrom-Json
+    $cfg = $null
+    try {
+        $cfg = Get-Content $ConfigFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        return $false
+    }
 
     # 2. Required fields
     $serverUrlVal   = Get-JsonProp $cfg 'serverUrl'

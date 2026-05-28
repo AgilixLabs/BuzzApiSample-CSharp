@@ -48,15 +48,18 @@ done
 json_get() {
     local json="$1" key="$2"
     if command -v jq &>/dev/null; then
-        printf '%s' "$json" | jq -r --arg k "$key" '.[$k] // empty'
+        printf '%s' "$json" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null || true
     else
         printf '%s' "$json" | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
 v = d.get(sys.argv[1])
 if v is not None:
     print(v, end='')
-" "$key"
+" "$key" 2>/dev/null || true
     fi
 }
 
