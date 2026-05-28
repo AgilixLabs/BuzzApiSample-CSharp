@@ -8,6 +8,7 @@
 #   -s URL        Buzz API server URL (prompted if omitted)
 #   -o PATH       Output path for buzz-config.json (default: project root)
 #   -l LOCATION   Certificate store location: CurrentUser (default) or LocalMachine
+#                 (Linux only; ignored on macOS which uses the PEM file approach)
 #                 LocalMachine installs under /etc/dotnet/... and requires root.
 #   -b BITS       RSA key size in bits (default: 2048; 3072 or 4096 recommended for new keys)
 #   -h            Show this help
@@ -16,12 +17,14 @@
 #   1. Prompts for the Buzz server URL.
 #   2. Logs in as a Buzz administrator (supports MFA).  Credentials are verified
 #      early so mistakes are caught before any other information is entered.
-#   3. Prompts for certificate store location (CurrentUser or LocalMachine).
+#   3. Linux: prompts for certificate store location (CurrentUser or LocalMachine).
+#      macOS: shows the PEM file storage path (~/.config/buzz-oauth/private_key.pem).
 #   4. Prompts for contact info and application name.
 #   5. Creates (or reuses) an Application Identity account in Buzz — the OAuth
 #      identity of your integration, with no password and no interactive login.
-#   6. Generates an RSA key pair and imports the private key into the .NET
-#      certificate store — no plaintext key files remain on disk.
+#   6. Generates an RSA key pair.
+#      Linux: imports private key into the .NET certificate store as a PFX file.
+#      macOS: stores private key as a PEM file at ~/.config/buzz-oauth/private_key.pem.
 #   7. Registers the public key with Buzz.
 #   8. Writes buzz-config.json so `dotnet run` works immediately.
 #
@@ -34,16 +37,19 @@
 # Platform:
 #   Linux and macOS.  On Windows, use scripts/Setup-BuzzOAuth.ps1 instead.
 #
-# .NET certificate store on Linux/macOS:
-#   CurrentUser  — ~/.dotnet/corefx/cryptography/x509stores/my/
-#   LocalMachine — /etc/dotnet/corefx/cryptography/x509stores/my/  (requires root)
+# Key storage on Linux:
+#   The private key is wrapped in a self-signed certificate and stored as a PKCS#12
+#   (.pfx) file in the .NET file-based certificate store:
+#     CurrentUser  — ~/.dotnet/corefx/cryptography/x509stores/my/
+#     LocalMachine — /etc/dotnet/corefx/cryptography/x509stores/my/  (requires root)
+#   The .NET runtime discovers certificates by scanning that directory.
 #
-#   The store is a directory of PKCS#12 (.pfx) files.  The .NET runtime discovers
-#   certificates by scanning that directory; the filename is the SHA-1 thumbprint.
-#   After setup, the private key lives only in that directory and in the temporary
-#   directory used during this script (cleaned up on exit).
+# Key storage on macOS:
+#   The private key is stored as a PEM file at ~/.config/buzz-oauth/private_key.pem
+#   (chmod 600).  buzz-config.json uses the "privateKeyPath" field to point to it.
+#   The .NET runtime loads the key directly via RSA.ImportFromPem().
 #
-# Service account deployments:
+# Service account deployments (Linux):
 #   Run this script AS the service account user (or sudo -u serviceuser) so the
 #   certificate lands in that user's home directory and the service can read it.
 #   Alternatively, copy the .pfx manually:
@@ -423,28 +429,36 @@ while [ -z "$ADMIN_TOKEN" ]; do
 done
 ok " OK"
 
-# ── Step 3: Certificate store location ───────────────────────────────────────
-section "Step 3: Certificate Store Location"
-printf 'The private key is stored in the OS certificate store so it\n'
-printf 'never exists as a plaintext file.\n\n'
-printf '  CurrentUser  — for interactive users and per-user services (default)\n'
-printf '  LocalMachine — for services running as root (requires sudo)\n\n'
-if ! $STORE_LOCATION_GIVEN; then
-    while true; do
-        printf 'Store location [CurrentUser/LocalMachine] (default: CurrentUser): '
-        read -r store_input
-        if [ -z "$store_input" ]; then
-            STORE_LOCATION="CurrentUser"; break
-        fi
-        case "$store_input" in
-            CurrentUser|LocalMachine) STORE_LOCATION="$store_input"; break ;;
-            *) printf "  Please enter 'CurrentUser' or 'LocalMachine'.\n" ;;
-        esac
-    done
-fi
-if [ "$STORE_LOCATION" = "LocalMachine" ] && [ "$(id -u)" -ne 0 ]; then
-    printf 'Error: LocalMachine store requires root.  Run with sudo.\n' >&2
-    exit 1
+# ── Step 3: Key storage location ─────────────────────────────────────────────
+section "Step 3: Key Storage"
+if [ "$(uname -s)" = "Darwin" ]; then
+    # macOS: .NET uses the Keychain for X509Store, but importing keys there requires
+    # interactive Security framework prompts.  Use the PEM file approach instead.
+    printf 'macOS detected.  The private key will be stored as a PEM file:\n'
+    printf '  %s/.config/buzz-oauth/private_key.pem\n' "$HOME"
+    printf '(chmod 600; buzz-config.json will reference it via "privateKeyPath")\n'
+else
+    printf 'The private key is wrapped in a self-signed certificate and stored in\n'
+    printf 'the .NET file-based certificate store (a directory of .pfx files).\n\n'
+    printf '  CurrentUser  — for interactive users and per-user services (default)\n'
+    printf '  LocalMachine — for services running as root (requires sudo)\n\n'
+    if ! $STORE_LOCATION_GIVEN; then
+        while true; do
+            printf 'Store location [CurrentUser/LocalMachine] (default: CurrentUser): '
+            read -r store_input
+            if [ -z "$store_input" ]; then
+                STORE_LOCATION="CurrentUser"; break
+            fi
+            case "$store_input" in
+                CurrentUser|LocalMachine) STORE_LOCATION="$store_input"; break ;;
+                *) printf "  Please enter 'CurrentUser' or 'LocalMachine'.\n" ;;
+            esac
+        done
+    fi
+    if [ "$STORE_LOCATION" = "LocalMachine" ] && [ "$(id -u)" -ne 0 ]; then
+        printf 'Error: LocalMachine store requires root.  Run with sudo.\n' >&2
+        exit 1
+    fi
 fi
 ok "  Store: $STORE_LOCATION"
 
@@ -591,8 +605,8 @@ else
     ok "  Using existing account: $OAUTH_USER_ID"
 fi
 
-# ── Step 6: RSA key pair + certificate ───────────────────────────────────────
-section "Step 6: RSA Key Generation and Certificate Store Import"
+# ── Step 6: RSA key pair + key installation ───────────────────────────────────
+section "Step 6: RSA Key Generation and Key Installation"
 
 # Interactive key size prompt when not provided via -b flag
 if ! $KEY_BITS_GIVEN; then
@@ -624,75 +638,93 @@ if ! printf '%s' "$KID" | grep -qE '^[A-Za-z0-9._-]{1,128}$'; then
     die "Invalid kid '$KID'.  Allowed: ASCII letters, digits, -, _, .  Max 128 chars."
 fi
 
-# Sanitise app name for use as a certificate CN
-CERT_CN="BuzzOAuth-$(printf '%s' "${APP_NAME}-${KID}" | tr -cd 'A-Za-z0-9._-' | tr ' ' '-')"
-
-info "Kid         : $KID"
-info "Cert CN     : $CERT_CN"
-info "Store       : $STORE_LOCATION/My"
+info "Kid : $KID"
 printf '\n'
-printf 'Generating %d-bit RSA key pair and creating self-signed certificate...' "$KEY_BITS"
 
 # All key material lives in the secure temp directory until we're done
 PRIV_KEY="${TMPDIR_SETUP}/private_key.pem"
 CERT_PEM="${TMPDIR_SETUP}/cert.pem"
 PUB_KEY="${TMPDIR_SETUP}/public_key.pem"
 PFX_FILE="${TMPDIR_SETUP}/cert.pfx"
+THUMBPRINT=""
+PEM_PATH=""
 
-# 1. Generate RSA private key
+# 1. Generate RSA private key (common to all platforms)
 openssl genpkey -algorithm RSA -pkeyopt "rsa_keygen_bits:${KEY_BITS}" \
     -out "$PRIV_KEY" 2>/dev/null
 chmod 600 "$PRIV_KEY"
 
-# 2. Self-signed certificate wrapping the key (100-year validity; kid can be rotated earlier)
-openssl req -new -x509 \
-    -key "$PRIV_KEY" \
-    -out "$CERT_PEM" \
-    -days 36500 \
-    -subj "/CN=${CERT_CN}" 2>/dev/null
-
 # 3. Extract public key in SubjectPublicKeyInfo (SPKI) PEM format — what Buzz expects
 openssl pkey -in "$PRIV_KEY" -pubout -out "$PUB_KEY" 2>/dev/null
 
-# 4. Compute the SHA-1 thumbprint (uppercase hex, no colons) — used as the filename in the store
-THUMBPRINT=$(openssl x509 -in "$CERT_PEM" -fingerprint -sha1 -noout 2>/dev/null \
-    | sed 's/.*Fingerprint=//' \
-    | tr -d ':' \
-    | tr '[:lower:]' '[:upper:]')
+if [ "$(uname -s)" = "Darwin" ]; then
+    # macOS: .NET uses the Keychain for X509Store, which requires interactive Security
+    # framework prompts not suitable for scripted setup.  Store the private key as a
+    # PEM file at a well-known path; buzz-config.json will reference it via "privateKeyPath".
+    printf 'Generating %d-bit RSA key pair...' "$KEY_BITS"
 
-[ -n "$THUMBPRINT" ] || die "Failed to compute certificate thumbprint."
+    MACOS_KEY_DIR="${HOME}/.config/buzz-oauth"
+    mkdir -p "$MACOS_KEY_DIR"
+    chmod 700 "$MACOS_KEY_DIR"
+    PEM_PATH="${MACOS_KEY_DIR}/private_key.pem"
+    cp "$PRIV_KEY" "$PEM_PATH"
+    chmod 600 "$PEM_PATH"
 
-# 5. Export as PKCS#12 (.pfx) with empty password
-#    .NET's OpenSSL-backed X509Store reads PFX files with an empty string password.
-#    On OpenSSL 3.x the -legacy flag avoids warnings about the default cipher; the
-#    .NET runtime can read both formats since it links against the same system OpenSSL.
-OPENSSL_MAJOR=$(openssl version 2>/dev/null | grep -oE '^OpenSSL [0-9]+' | grep -oE '[0-9]+$' || true)
-PKCS12_LEGACY_FLAG=""
-[ "${OPENSSL_MAJOR:-1}" -ge 3 ] 2>/dev/null && PKCS12_LEGACY_FLAG="-legacy"
+    ok " done"
+    info "Private key : $PEM_PATH"
+else
+    # Linux: wrap the key in a self-signed certificate and install as a PFX in the
+    # .NET file-based certificate store.  The store is a directory of .pfx files;
+    # .NET discovers them by thumbprint filename.
+    CERT_CN="BuzzOAuth-$(printf '%s' "${APP_NAME}-${KID}" | tr -cd 'A-Za-z0-9._-' | tr ' ' '-')"
+    info "Cert CN     : $CERT_CN"
+    info "Store       : $STORE_LOCATION/My"
+    printf '\n'
+    printf 'Generating %d-bit RSA key pair and creating self-signed certificate...' "$KEY_BITS"
 
-openssl pkcs12 -export \
-    -in      "$CERT_PEM" \
-    -inkey   "$PRIV_KEY" \
-    -out     "$PFX_FILE" \
-    -passout pass: \
-    $PKCS12_LEGACY_FLAG 2>/dev/null
+    # 2. Self-signed certificate wrapping the key (100-year validity; kid can be rotated earlier)
+    openssl req -new -x509 \
+        -key "$PRIV_KEY" \
+        -out "$CERT_PEM" \
+        -days 36500 \
+        -subj "/CN=${CERT_CN}" 2>/dev/null
 
-# 6. Install into the .NET certificate store
-#    The store is a plain directory; .NET discovers all *.pfx files in it.
-#    We use the thumbprint as the filename (the .NET convention) for easy identification.
-case "$STORE_LOCATION" in
-    CurrentUser)  STORE_DIR="${HOME}/.dotnet/corefx/cryptography/x509stores/my" ;;
-    LocalMachine) STORE_DIR="/etc/dotnet/corefx/cryptography/x509stores/my"     ;;
-esac
+    # 4. Compute the SHA-1 thumbprint (uppercase hex, no colons) — used as the filename in the store
+    THUMBPRINT=$(openssl x509 -in "$CERT_PEM" -fingerprint -sha1 -noout 2>/dev/null \
+        | sed 's/.*Fingerprint=//' \
+        | tr -d ':' \
+        | tr '[:lower:]' '[:upper:]')
 
-mkdir -p "$STORE_DIR"
-chmod 700 "$STORE_DIR"
-cp "$PFX_FILE" "${STORE_DIR}/${THUMBPRINT}.pfx"
-chmod 600 "${STORE_DIR}/${THUMBPRINT}.pfx"
+    [ -n "$THUMBPRINT" ] || die "Failed to compute certificate thumbprint."
 
-ok " done"
-info "Thumbprint: $THUMBPRINT"
-info "Stored at : ${STORE_DIR}/${THUMBPRINT}.pfx"
+    # 5. Export as PKCS#12 (.pfx) with empty password
+    #    On OpenSSL 3.x the -legacy flag avoids algorithm warnings; .NET reads both formats.
+    OPENSSL_MAJOR=$(openssl version 2>/dev/null | grep -oE '^OpenSSL [0-9]+' | grep -oE '[0-9]+$' || true)
+    PKCS12_LEGACY_FLAG=""
+    [ "${OPENSSL_MAJOR:-1}" -ge 3 ] 2>/dev/null && PKCS12_LEGACY_FLAG="-legacy"
+
+    openssl pkcs12 -export \
+        -in      "$CERT_PEM" \
+        -inkey   "$PRIV_KEY" \
+        -out     "$PFX_FILE" \
+        -passout pass: \
+        $PKCS12_LEGACY_FLAG 2>/dev/null
+
+    # 6. Install into the .NET certificate store
+    case "$STORE_LOCATION" in
+        CurrentUser)  STORE_DIR="${HOME}/.dotnet/corefx/cryptography/x509stores/my" ;;
+        LocalMachine) STORE_DIR="/etc/dotnet/corefx/cryptography/x509stores/my"     ;;
+    esac
+
+    mkdir -p "$STORE_DIR"
+    chmod 700 "$STORE_DIR"
+    cp "$PFX_FILE" "${STORE_DIR}/${THUMBPRINT}.pfx"
+    chmod 600 "${STORE_DIR}/${THUMBPRINT}.pfx"
+
+    ok " done"
+    info "Thumbprint: $THUMBPRINT"
+    info "Stored at : ${STORE_DIR}/${THUMBPRINT}.pfx"
+fi
 
 # ── Step 7: Register the public key with Buzz ─────────────────────────────────
 section "Step 7: Registering Public Key with Buzz"
@@ -724,8 +756,28 @@ esac
 # ── Step 8: Write buzz-config.json ────────────────────────────────────────────
 section "Step 8: Writing Configuration"
 
-python3 - "$SERVER_URL" "$CONTACT_INFO" "$APP_NAME" "$OAUTH_USER_ID" \
-          "$KID" "$THUMBPRINT" "$STORE_LOCATION" "$CONFIG_OUTPUT" <<'PYEOF'
+mkdir -p "$(dirname "$CONFIG_OUTPUT")"
+
+if [ "$(uname -s)" = "Darwin" ]; then
+    python3 - "$SERVER_URL" "$CONTACT_INFO" "$APP_NAME" "$OAUTH_USER_ID" \
+              "$KID" "$PEM_PATH" "$CONFIG_OUTPUT" <<'PYEOF'
+import sys, json
+server_url, contact, app, user_id, kid, pem_path, out_path = sys.argv[1:8]
+config = {
+    "serverUrl":              server_url,
+    "contactInformation":     contact,
+    "applicationInformation": app,
+    "oauthUserId":            user_id,
+    "oauthKid":               kid,
+    "privateKeyPath":         pem_path,
+}
+with open(out_path, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+PYEOF
+else
+    python3 - "$SERVER_URL" "$CONTACT_INFO" "$APP_NAME" "$OAUTH_USER_ID" \
+              "$KID" "$THUMBPRINT" "$STORE_LOCATION" "$CONFIG_OUTPUT" <<'PYEOF'
 import sys, json
 server_url, contact, app, user_id, kid, thumb, store_loc, out_path = sys.argv[1:9]
 config = {
@@ -741,6 +793,7 @@ with open(out_path, 'w') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
 PYEOF
+fi
 
 ok "  Written: $CONFIG_OUTPUT"
 

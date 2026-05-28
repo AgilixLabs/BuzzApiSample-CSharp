@@ -61,11 +61,14 @@
         -AdminToken $plainToken -UserId 12345678 -Kid "2025-q2" -PublicKeyPath .\public_key.pem
 
 .NOTES
-    After registration the Application Identity account is ready.  Configure your app with:
-        buzzServerUrl = <ServerUrl>
-        oauthUserId   = <UserId>
-        oauthKid      = <Kid>
-        privateKeyPath = path to private_key.pem
+    After registration the Application Identity account is ready.  Configure buzz-config.json with:
+        serverUrl   = <ServerUrl>
+        oauthUserId = <UserId>
+        oauthKid    = <Kid>
+
+    And one of:
+        certThumbprint    = <thumbprint>  (with certStoreLocation = CurrentUser or LocalMachine)
+        privateKeyPath    = path to private_key.pem
 #>
 
 [CmdletBinding()]

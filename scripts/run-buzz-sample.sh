@@ -78,7 +78,7 @@ setup_complete() {
     private_key_path="$(json_get "$config" privateKeyPath)"
 
     if [ -n "$cert_thumbprint" ]; then
-        # Certificate store path (Linux .NET cert store)
+        # Linux .NET file-based cert store (not applicable on macOS)
         store_location="$(json_get "$config" certStoreLocation)"
         if [ "$store_location" = "LocalMachine" ]; then
             store_dir="/etc/dotnet/corefx/cryptography/x509stores/my"

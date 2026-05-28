@@ -288,7 +288,7 @@ JsonNode response = client.VerifyResponse(
 **Platform notes:**
 - **Windows** — key stored in Windows CNG (can be hardware-backed via TPM).  Use
   `-StoreLocation LocalMachine` in the setup script for services running as SYSTEM.
-- **macOS** — key stored in the macOS Keychain.
+- **macOS** — key stored as a PEM file at `~/.config/buzz-oauth/private_key.pem` (chmod 600).
 - **Linux** — key stored in `~/.dotnet/corefx/cryptography/x509stores/my/` as a PFX file.
   Restrict permissions: `chmod 700 ~/.dotnet/corefx/cryptography/x509stores/my`.
   For high-security Linux deployments consider a hardware token or secrets manager instead.

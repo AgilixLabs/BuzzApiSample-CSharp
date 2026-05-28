@@ -45,7 +45,10 @@ function Test-SetupComplete {
     $cfg = Get-Content $ConfigFile -Raw | ConvertFrom-Json
 
     # 2. Required fields
-    if (-not $cfg.serverUrl -or -not $cfg.oauthUserId -or -not $cfg.oauthKid) {
+    $serverUrlVal   = Get-JsonProp $cfg 'serverUrl'
+    $oauthUserIdVal = Get-JsonProp $cfg 'oauthUserId'
+    $oauthKidVal    = Get-JsonProp $cfg 'oauthKid'
+    if (-not $serverUrlVal -or -not $oauthUserIdVal -or -not $oauthKidVal) {
         return $false
     }
 

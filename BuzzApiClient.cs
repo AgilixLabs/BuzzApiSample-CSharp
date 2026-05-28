@@ -479,7 +479,16 @@ namespace BuzzAPISample
                 throw new Exception($"OAuth token response did not contain an access_token: {tokenJson}");
             }
 
-            int expiresIn = tokenJson?["expires_in"]?.GetValue<int>() ?? 3600;
+            int expiresIn = 3600;
+            if (tokenJson?["expires_in"] is { } expiresInNode)
+            {
+                try { expiresIn = expiresInNode.GetValue<int>(); }
+                catch
+                {
+                    if (int.TryParse(expiresInNode.ToString(), out int parsed) && parsed > 0)
+                        expiresIn = parsed;
+                }
+            }
             Token = accessToken;
             _oauthTokenExpiry = DateTimeOffset.UtcNow.AddSeconds(expiresIn);
 

@@ -590,6 +590,10 @@ $config = [ordered]@{
 }
 
 # Write UTF-8 without BOM so the file is portable across all platforms
+$configDir = Split-Path $ConfigOutput -Parent
+if ($configDir -and -not (Test-Path $configDir)) {
+    New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+}
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [System.IO.File]::WriteAllText($ConfigOutput, ($config | ConvertTo-Json), $utf8NoBom)
 Write-Host "  Written: $ConfigOutput" -ForegroundColor Green
