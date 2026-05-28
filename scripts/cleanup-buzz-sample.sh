@@ -44,14 +44,17 @@ done
 json_get() {
     local json="$1" key="$2"
     if command -v jq &>/dev/null; then
-        printf '%s' "$json" | jq -r --arg k "$key" '.[$k] // empty'
+        printf '%s' "$json" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null || true
     else
         printf '%s' "$json" | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-v = d.get(sys.argv[1])
-if v is not None:
-    print(v, end='')
+try:
+    d = json.load(sys.stdin)
+    v = d.get(sys.argv[1])
+    if v is not None:
+        print(v, end='')
+except Exception:
+    pass
 " "$key"
     fi
 }
@@ -59,21 +62,24 @@ if v is not None:
 json_get_nested() {
     local json="$1" path="$2"   # path like .response.user.token
     if command -v jq &>/dev/null; then
-        printf '%s' "$json" | jq -r "${path} // empty"
+        printf '%s' "$json" | jq -r "${path} // empty" 2>/dev/null || true
     else
         printf '%s' "$json" | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-keys = sys.argv[1].lstrip('.').split('.')
-for k in keys:
-    if isinstance(d, dict):
-        d = d.get(k)
-    else:
-        d = None
-    if d is None:
-        break
-if d is not None:
-    print(d, end='')
+try:
+    d = json.load(sys.stdin)
+    keys = sys.argv[1].lstrip('.').split('.')
+    for k in keys:
+        if isinstance(d, dict):
+            d = d.get(k)
+        else:
+            d = None
+        if d is None:
+            break
+    if d is not None:
+        print(d, end='')
+except Exception:
+    pass
 " "$path"
     fi
 }

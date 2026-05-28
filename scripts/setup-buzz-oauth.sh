@@ -121,14 +121,14 @@ fi
 USE_JQ=0
 command -v jq &>/dev/null && USE_JQ=1
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+die() { printf '\nError: %s\n' "$*" >&2; exit 1; }
+
 # ── Temporary workspace (cleaned up on exit) ──────────────────────────────────
 TMPDIR_SETUP="$(mktemp -d 2>/dev/null || mktemp -d -t buzz-oauth)"
 [ -d "$TMPDIR_SETUP" ] || die "Failed to create temporary directory."
 chmod 700 "$TMPDIR_SETUP"
 trap 'rm -rf "$TMPDIR_SETUP"' EXIT
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-die() { printf '\nError: %s\n' "$*" >&2; exit 1; }
 
 # Print a coloured section header
 section() { printf '\n\033[1;33m─── %s \033[0m\n' "$*"; }
@@ -665,6 +665,16 @@ PFX_FILE="${TMPDIR_SETUP}/cert.pfx"
 THUMBPRINT=""
 PEM_PATH=""
 STORE_DIR=""
+
+# Validate KEY_BITS when supplied via -b flag (interactive prompt already validates).
+if $KEY_BITS_GIVEN; then
+    case "$KEY_BITS" in
+        ''|*[!0-9]*) die "Invalid key size '$KEY_BITS'. Must be a numeric value between 2048 and 16384." ;;
+    esac
+    if [ "$KEY_BITS" -lt 2048 ] || [ "$KEY_BITS" -gt 16384 ]; then
+        die "Invalid key size '$KEY_BITS'. Must be between 2048 and 16384 bits."
+    fi
+fi
 
 # 1. Generate RSA private key (common to all platforms)
 openssl genpkey -algorithm RSA -pkeyopt "rsa_keygen_bits:${KEY_BITS}" \

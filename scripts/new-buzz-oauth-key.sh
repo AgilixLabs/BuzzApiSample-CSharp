@@ -64,7 +64,13 @@ if ! command -v openssl &>/dev/null; then
     exit 1
 fi
 
-if [ "$KEY_BITS" -lt 2048 ] 2>/dev/null; then
+case "$KEY_BITS" in
+    ''|*[!0-9]*)
+        printf 'Error: key size must be an integer number of bits.\n' >&2
+        exit 1
+        ;;
+esac
+if [ "$KEY_BITS" -lt 2048 ]; then
     printf 'Error: key size must be at least 2048 bits (Buzz minimum).\n' >&2
     exit 1
 fi
