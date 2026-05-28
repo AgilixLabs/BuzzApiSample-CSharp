@@ -179,8 +179,9 @@ namespace BuzzAPISample
         /// </param>
         /// <param name="verbose">Include verbose logging</param>
         /// <param name="timeout">Timeout in milliseconds for requests</param>
+        /// <param name="logger">Optional logger for retry, rate-limit, and token events</param>
         public BuzzApiClient(string serverUrl, string userAgent, string oauthUserId, string oauthKid, RSA privateKey,
-            bool verbose = false, int timeout = 600000)
+            bool verbose = false, int timeout = 600000, ILogger<BuzzApiClient>? logger = null)
         {
             if (string.IsNullOrEmpty(oauthUserId))
                 throw new ArgumentException("oauthUserId is required", nameof(oauthUserId));
@@ -199,7 +200,7 @@ namespace BuzzAPISample
             _httpClient.DefaultRequestHeaders.Add("User-Agent", UserAgent);
             _httpClient.Timeout = TimeSpan.FromMilliseconds(Timeout);
 
-            _logger = null;
+            _logger = logger;
             _autoLoginEnabled = false;
             _autoLoginUserspace = string.Empty;
             _autoLoginUsername = string.Empty;

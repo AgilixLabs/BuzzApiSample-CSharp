@@ -554,11 +554,12 @@ Write-Host "  PUT $keyRegUrl" -NoNewline
 
 try {
     $regResponse = Invoke-WebRequest `
-        -Uri         $keyRegUrl `
-        -Method      Put `
-        -Headers     @{ Authorization = "Bearer $adminToken" } `
-        -ContentType "application/x-pem-file" `
-        -Body        ([System.Text.Encoding]::UTF8.GetBytes($publicKeyPem))
+        -Uri             $keyRegUrl `
+        -Method          Put `
+        -Headers         @{ Authorization = "Bearer $adminToken" } `
+        -ContentType     "application/x-pem-file" `
+        -UseBasicParsing `
+        -Body            ([System.Text.Encoding]::UTF8.GetBytes($publicKeyPem))
 } catch {
     Write-Host ""
     $sc = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $null }

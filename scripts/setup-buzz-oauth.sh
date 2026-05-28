@@ -805,8 +805,12 @@ printf '\033[1;32m════════════════════�
 printf '\n'
 printf 'OAuth User ID  : %s\n' "$OAUTH_USER_ID"
 printf 'Key ID (kid)   : %s\n' "$KID"
-printf 'Cert Thumbprint: %s\n' "$THUMBPRINT"
-printf 'Cert store     : %s\n' "$STORE_DIR"
+if [ "$(uname -s)" = "Darwin" ]; then
+    printf 'Private key    : %s\n' "$PEM_PATH"
+else
+    printf 'Cert Thumbprint: %s\n' "$THUMBPRINT"
+    printf 'Cert store     : %s\n' "$STORE_DIR"
+fi
 printf 'Config file    : %s\n' "$CONFIG_OUTPUT"
 printf '\n'
 printf '\033[1;36mTo test the configuration:\033[0m\n'
@@ -814,14 +818,19 @@ printf '  cd %s\n' "$PROJECT_ROOT"
 printf '  dotnet run\n'
 printf '\n'
 printf '\033[1;33mSecurity notes:\033[0m\n'
-printf '  - The private key is in the %s certificate store, not a file.\n' "$STORE_LOCATION"
+if [ "$(uname -s)" = "Darwin" ]; then
+    printf '  - The private key is stored at %s (chmod 600).\n' "$PEM_PATH"
+    printf '  - Never commit this file to source control.\n'
+else
+    printf '  - The private key is in the %s certificate store, not a file.\n' "$STORE_LOCATION"
+    printf '  - If this service runs as a different user, copy the cert:\n'
+    printf '      sudo -u <serviceuser> mkdir -p /home/<serviceuser>/.dotnet/corefx/cryptography/x509stores/my\n'
+    printf '      sudo cp "%s/%s.pfx" /home/<serviceuser>/.dotnet/corefx/cryptography/x509stores/my/\n' \
+        "$STORE_DIR" "$THUMBPRINT"
+    printf '      sudo chown <serviceuser>: /home/<serviceuser>/.dotnet/corefx/cryptography/x509stores/my/%s.pfx\n' \
+        "$THUMBPRINT"
+fi
 printf '  - buzz-config.json contains no secrets and is gitignored.\n'
 printf '  - To rotate the key: re-run this script with a new kid.\n'
 printf '  - To revoke all tokens: POST %s/api/oauth/revoke\n' "$SERVER_URL"
-printf '  - If this service runs as a different user, copy the cert:\n'
-printf '      sudo -u <serviceuser> mkdir -p /home/<serviceuser>/.dotnet/corefx/cryptography/x509stores/my\n'
-printf '      sudo cp "%s/%s.pfx" /home/<serviceuser>/.dotnet/corefx/cryptography/x509stores/my/\n' \
-    "$STORE_DIR" "$THUMBPRINT"
-printf '      sudo chown <serviceuser>: /home/<serviceuser>/.dotnet/corefx/cryptography/x509stores/my/%s.pfx\n' \
-    "$THUMBPRINT"
 printf '\n'

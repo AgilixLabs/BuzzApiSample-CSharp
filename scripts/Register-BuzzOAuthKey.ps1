@@ -117,15 +117,16 @@ try {
         -Method          Put `
         -Headers         @{ Authorization = "Bearer $AdminToken" } `
         -ContentType     "application/x-pem-file" `
+        -UseBasicParsing `
         -Body            ([System.Text.Encoding]::UTF8.GetBytes($publicKeyPem))
 
     if ($response.StatusCode -eq 204) {
         Write-Host "Public key registered successfully (HTTP 204)."
         Write-Host ""
-        Write-Host "Configure your application with:"
-        Write-Host "  buzzServerUrl = $ServerUrl"
-        Write-Host "  oauthUserId   = $UserId"
-        Write-Host "  oauthKid      = $Kid"
+        Write-Host "Configure buzz-config.json with:"
+        Write-Host "  serverUrl      = $ServerUrl"
+        Write-Host "  oauthUserId    = $UserId"
+        Write-Host "  oauthKid       = $Kid"
         Write-Host "  privateKeyPath = <path to your private_key.pem>"
     } else {
         Write-Warning "Unexpected HTTP status: $($response.StatusCode)"

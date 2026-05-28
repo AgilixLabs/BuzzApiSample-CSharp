@@ -199,7 +199,7 @@ if ($OAuthKid) {
     $keyUrl = "$ServerUrl/api/users/$OAuthUserId/keys/$OAuthKid"
     try {
         $keyResp = Invoke-WebRequest -Method Delete -Uri $keyUrl `
-            -Headers @{ Authorization = "Bearer $AdminToken" } -ErrorAction Stop
+            -Headers @{ Authorization = "Bearer $AdminToken" } -UseBasicParsing -ErrorAction Stop
         Write-Host "OAuth key deleted (HTTP $($keyResp.StatusCode))."
     } catch {
         $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $null }
