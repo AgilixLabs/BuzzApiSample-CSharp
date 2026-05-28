@@ -11,8 +11,8 @@ namespace BuzzAPISample
         {
             /* CONFIGURATION
              *
-             * Quickest path: run ./scripts/run-buzz-sample.sh (Linux) or .\scripts\Run-BuzzSample.ps1
-             * (Windows/macOS) — it checks whether setup has been done and runs it if not,
+             * Quickest path: run ./scripts/run-buzz-sample.sh (Linux/macOS) or
+             * .\scripts\Run-BuzzSample.ps1 (Windows) — it checks whether setup has been done and runs it if not,
              * then launches this program.
              *
              * Manual path: create buzz-config.json yourself (see README.md) or run the

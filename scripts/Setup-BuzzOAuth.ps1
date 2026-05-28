@@ -442,7 +442,7 @@ if ($useExisting -eq "Y") {
 }
 Write-Host ""
 
-# ── Step 5: Key generation + certificate store ────────────────────────────────
+# ── Step 6: Key generation + certificate store ────────────────────────────────
 Write-Host "─── Step 6: RSA Key Generation ────────────────────────────" -ForegroundColor Yellow
 
 if (-not $PSBoundParameters.ContainsKey('KeySize')) {
@@ -480,6 +480,7 @@ Write-Host "Generating key..." -NoNewline
 # Generate RSA key
 if ($IsWindows) {
     $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider($KeySize)
+    $rsa.PersistKeyInCsp = $false  # don't leave an orphaned CSP key container; only the cert store copy persists
 } else {
     $rsa = [System.Security.Cryptography.RSA]::Create()
     $rsa.KeySize = $KeySize
@@ -546,7 +547,7 @@ if ($IsLinux) {
 }
 Write-Host ""
 
-# ── Step 6: Register the public key with Buzz ─────────────────────────────────
+# ── Step 7: Register the public key with Buzz ─────────────────────────────────
 Write-Host "─── Step 7: Registering Public Key with Buzz ──────────────" -ForegroundColor Yellow
 $keyRegUrl = "$ServerUrl/api/users/$oauthUserId/keys/$kid"
 Write-Host "  PUT $keyRegUrl" -NoNewline
@@ -576,7 +577,7 @@ if ($regResponse.StatusCode -ne 204) {
 Write-Host " 204 OK" -ForegroundColor Green
 Write-Host ""
 
-# ── Step 7: Write buzz-config.json ────────────────────────────────────────────
+# ── Step 8: Write buzz-config.json ────────────────────────────────────────────
 Write-Host "─── Step 8: Writing Configuration ─────────────────────────" -ForegroundColor Yellow
 
 $config = [ordered]@{

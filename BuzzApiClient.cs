@@ -554,7 +554,7 @@ namespace BuzzAPISample
             using X509Store store = new(StoreName.My, storeLocation);
             store.Open(OpenFlags.ReadOnly);
             X509Certificate2Collection found = store.Certificates.Find(
-                X509FindType.FindByThumbprint, thumbprint.Replace(" ", ""), validOnly: false);
+                X509FindType.FindByThumbprint, string.Concat(thumbprint.Split()), validOnly: false);
             if (found.Count == 0)
                 throw new InvalidOperationException(
                     $"Certificate with thumbprint '{thumbprint}' not found in the {storeLocation}/My store. " +

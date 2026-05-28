@@ -46,21 +46,21 @@ any data in the target domain.
 The run script checks whether one-time setup has been completed.  If not, it runs
 the interactive setup first, then executes the read-only demo.
 
-**Linux** (bash, requires `openssl curl python3 dotnet`):
+**Linux / macOS** (bash, requires `openssl curl python3 dotnet`):
 ```bash
 chmod +x scripts/run-buzz-sample.sh
 ./scripts/run-buzz-sample.sh
 ```
 
-**Windows / macOS** (PowerShell 7+):
+**Windows** (PowerShell 5.1 or 7+):
 ```powershell
 .\scripts\Run-BuzzSample.ps1
 ```
 
 To force re-running the setup even when already configured:
 ```bash
-./scripts/run-buzz-sample.sh --setup          # Linux
-.\scripts\Run-BuzzSample.ps1 -ForceSetup      # Windows/macOS
+./scripts/run-buzz-sample.sh --setup          # Linux / macOS
+.\scripts\Run-BuzzSample.ps1 -ForceSetup      # Windows
 ```
 
 ### Cleanup (return to a completely clean state)
@@ -69,13 +69,13 @@ The cleanup script removes all artifacts from a previous setup run: deletes the
 Application Identity account from Buzz, removes the registered OAuth key, removes
 the local certificate, and deletes `buzz-config.json`.
 
-**Linux**:
+**Linux / macOS**:
 ```bash
 chmod +x scripts/cleanup-buzz-sample.sh
 ./scripts/cleanup-buzz-sample.sh
 ```
 
-**Windows / macOS**:
+**Windows**:
 ```powershell
 .\scripts\Cleanup-BuzzSample.ps1
 ```
