@@ -327,15 +327,15 @@ Write-Host "This is the Buzz user account that represents your application."
 Write-Host "It authenticates via OAuth only — it has no password."
 Write-Host ""
 
-$useExisting = $null
-while ($useExisting -notin @("N","Y")) {
-    $useExisting = (Read-Host "Create a new Application Identity account? [Y/n]").Trim().ToUpper()
-    if ([string]::IsNullOrEmpty($useExisting)) { $useExisting = "Y" }
+$createNew = $null
+while ($createNew -notin @("N","Y")) {
+    $createNew = (Read-Host "Create a new Application Identity account? [Y/n]").Trim().ToUpper()
+    if ([string]::IsNullOrEmpty($createNew)) { $createNew = "Y" }
 }
 
 $oauthUserId = ""
 
-if ($useExisting -eq "Y") {
+if ($createNew -eq "Y") {
     Write-Host "Fetching available domains..." -NoNewline
     try {
         $domainsResult = Invoke-RestMethod `
@@ -469,7 +469,7 @@ if ($kid -notmatch '^[A-Za-z0-9\-_\.]{1,128}$') {
     throw "Invalid kid '$kid'. Allowed: ASCII letters, digits, -, _, .  Max 128 chars."
 }
 
-$certSubject = "CN=BuzzOAuth-$applicationInformation-$kid"
+$certSubject = "CN=BuzzOAuth-$($applicationInformation -replace '[,=+<>#;"\\]', '')-$kid"
 
 Write-Host "  Kid         : $kid"
 Write-Host "  Cert subject: $certSubject"

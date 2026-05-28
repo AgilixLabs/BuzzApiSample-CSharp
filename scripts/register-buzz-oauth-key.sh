@@ -23,7 +23,7 @@
 #               -d '{"request":{"cmd":"login3","username":"myspace/admin","password":"secret"}}' \
 #               | python3 -c "import sys,json; print(json.load(sys.stdin)['response']['user']['token'])")
 #
-# Requires: curl, openssl (for input validation)
+# Requires: curl
 #
 # Examples:
 #   ./scripts/register-buzz-oauth-key.sh \
@@ -96,7 +96,7 @@ URL="${SERVER_URL}/api/users/${USER_ID}/keys/${KID}"
 printf 'Registering public key...\n'
 printf '  URL  : %s\n' "$URL"
 printf '  Kid  : %s\n' "$KID"
-printf '  File : %s\n' "$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$PUBLIC_KEY_PATH")"
+printf '  File : %s\n' "$(cd -P "$(dirname -- "$PUBLIC_KEY_PATH")" && printf '%s/%s' "$PWD" "$(basename -- "$PUBLIC_KEY_PATH")")"
 printf '\n'
 
 # Capture HTTP status code alongside response body

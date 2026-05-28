@@ -178,6 +178,11 @@ fi
 # ── Cert store path ───────────────────────────────────────────────────────────
 if [ "$STORE_LOCATION_STR" = "LocalMachine" ]; then
     STORE_DIR="/etc/dotnet/corefx/cryptography/x509stores/my"
+    if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+        printf 'Error: removing a LocalMachine certificate requires root privileges.\n' >&2
+        printf 'Please re-run with: sudo ./scripts/cleanup-buzz-sample.sh\n' >&2
+        exit 1
+    fi
 else
     STORE_DIR="${HOME}/.dotnet/corefx/cryptography/x509stores/my"
 fi

@@ -13,7 +13,7 @@
 #   private_key.pem  — RSA private key  (keep secret; never commit to source control)
 #   public_key.pem   — RSA public key   (upload to Buzz with register-buzz-oauth-key.sh)
 #
-# Requires: openssl (available on virtually all Linux distributions)
+# Requires: openssl (available on virtually all Linux and macOS installations)
 #
 # Examples:
 #   ./scripts/new-buzz-oauth-key.sh
@@ -26,6 +26,15 @@
 #   directly into the .NET certificate store so no plaintext key file is left on disk.
 
 set -euo pipefail
+
+case "$(uname -s)" in
+    Linux|Darwin) ;;
+    *)
+        printf 'This script is for Linux and macOS only.\n' >&2
+        printf 'On Windows, run: .\\scripts\\New-BuzzOAuthKey.ps1\n' >&2
+        exit 1
+        ;;
+esac
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 OUTPUT_DIR="."
@@ -85,8 +94,8 @@ openssl pkey -in "$PRIV_KEY" -pubout -out "$PUB_KEY" 2>/dev/null
 chmod 600 "$PRIV_KEY"
 
 printf '\nRSA key pair generated (%d bits):\n' "$KEY_BITS"
-printf '  Private key : %s\n' "$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$PRIV_KEY")"
-printf '  Public key  : %s\n' "$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$PUB_KEY")"
+printf '  Private key : %s\n' "$(cd -P "$(dirname -- "$PRIV_KEY")" && printf '%s/%s' "$PWD" "$(basename -- "$PRIV_KEY")")"
+printf '  Public key  : %s\n' "$(cd -P "$(dirname -- "$PUB_KEY")" && printf '%s/%s' "$PWD" "$(basename -- "$PUB_KEY")")"
 printf '\n'
 printf 'Next step: register the public key with Buzz.\n'
 printf '  ./scripts/register-buzz-oauth-key.sh \\\n'

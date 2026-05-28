@@ -11,9 +11,19 @@
 # To force re-running setup even if it was already completed:
 #   ./scripts/run-buzz-sample.sh --setup
 #
-# Requires: dotnet (https://learn.microsoft.com/dotnet/core/install/)
+# Requires: dotnet   (https://learn.microsoft.com/dotnet/core/install/)
+#            python3
 
 set -euo pipefail
+
+case "$(uname -s)" in
+    Linux|Darwin) ;;
+    *)
+        printf 'This script is for Linux and macOS only.\n' >&2
+        printf 'On Windows, run: .\\scripts\\Run-BuzzSample.ps1\n' >&2
+        exit 1
+        ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -119,7 +129,13 @@ printf '\n'
 
 if ! command -v dotnet &>/dev/null; then
     printf 'Error: dotnet is not on PATH.\n' >&2
-    printf 'Install .NET: https://learn.microsoft.com/dotnet/core/install/linux\n' >&2
+    printf 'Install .NET: https://learn.microsoft.com/dotnet/core/install/\n' >&2
+    exit 1
+fi
+
+if ! command -v python3 &>/dev/null; then
+    printf 'Error: python3 is required but not found.\n' >&2
+    printf 'Install: apt-get install python3  /  brew install python3\n' >&2
     exit 1
 fi
 
