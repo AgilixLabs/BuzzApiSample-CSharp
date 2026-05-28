@@ -228,17 +228,18 @@ while [ -z "$ADMIN_TOKEN" ]; do
 
     printf 'Logging in...'
 
-    login_body="$(python3 -c "
+    login_body="$(printf '%s\n%s\n' "$ADMIN_USERNAME" "$ADMIN_PASSWORD" | python3 -c "
 import sys, json
+lines = sys.stdin.read().splitlines()
 body = {
     'request': {
         'cmd': 'login3',
-        'username': sys.argv[1],
-        'password': sys.argv[2]
+        'username': lines[0],
+        'password': lines[1]
     }
 }
 print(json.dumps(body), end='')
-" "$ADMIN_USERNAME" "$ADMIN_PASSWORD")"
+")"
     ADMIN_PASSWORD=""
 
     login_response="$(printf '%s' "$login_body" | curl -sL -X POST \
@@ -264,17 +265,18 @@ print(json.dumps(body), end='')
 
         mfa_token="$(buzz_get_field "$login_response" partial_token)"
 
-        mfa_body="$(python3 -c "
+        mfa_body="$(printf '%s\n%s\n' "$mfa_token" "$MFA_CODE" | python3 -c "
 import sys, json
+lines = sys.stdin.read().splitlines()
 body = {
     'request': {
         'cmd': 'verifylogin',
-        'token': sys.argv[1],
-        'code':  sys.argv[2]
+        'token': lines[0],
+        'code':  lines[1]
     }
 }
 print(json.dumps(body), end='')
-" "$mfa_token" "$MFA_CODE")"
+")"
         mfa_token=""
 
         login_response="$(printf '%s' "$mfa_body" | curl -sL -X POST \

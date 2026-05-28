@@ -346,6 +346,7 @@ namespace BuzzAPISample
                 {
                     return responseNode;
                 }
+                // content is StringContent (ByteArrayContent-backed) so its stream rewinds on re-read — safe to reuse.
                 using HttpResponseMessage retryResponse = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
                 responseNode = JsonNode.Parse(await retryResponse.Content.ReadAsStreamAsync(cancel));
                 TraceResponse(responseNode);
@@ -386,7 +387,7 @@ namespace BuzzAPISample
                         httpRequestMessage.Headers.Accept.Add(new(acceptsContentType));
                     }
 
-                    TraceRequest(requestUri, content);
+                    await TraceRequestAsync(requestUri, content);
 
                     try
                     {
@@ -676,12 +677,12 @@ namespace BuzzAPISample
             _logger?.LogDebug("Will make request retry #{Attempt} after {WaitTimeMs} milliseconds because of error: {ErrorMessage}", attempt, waitMs, e.Message);
         }
 
-        private void TraceRequest(string requestUri, HttpContent? content)
+        private async Task TraceRequestAsync(string requestUri, HttpContent? content)
         {
             _logger?.LogInformation("Request: {RequestUri}", requestUri);
-            if (content is not null && content is StringContent)
+            if (content is StringContent)
             {
-                string text = content.ReadAsStringAsync().Result;
+                string text = await content.ReadAsStringAsync();
                 _logger?.LogDebug("Request content: {Content}", text[..Math.Min(text.Length, 1000)]);
             }
         }

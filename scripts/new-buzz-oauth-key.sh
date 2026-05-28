@@ -85,13 +85,13 @@ fi
 printf 'Generating %d-bit RSA key pair...\n' "$KEY_BITS"
 
 # Generate private key (PKCS#8 format via genpkey, widely supported)
-openssl genpkey -algorithm RSA -pkeyopt "rsa_keygen_bits:${KEY_BITS}" -out "$PRIV_KEY" 2>/dev/null
+openssl genpkey -algorithm RSA -pkeyopt "rsa_keygen_bits:${KEY_BITS}" -out "$PRIV_KEY"
+[ -s "$PRIV_KEY" ] || { printf 'Error: failed to generate RSA private key.\n' >&2; exit 1; }
+chmod 600 "$PRIV_KEY"
 
 # Extract public key in SubjectPublicKeyInfo (SPKI) PEM format — required by Buzz
-openssl pkey -in "$PRIV_KEY" -pubout -out "$PUB_KEY" 2>/dev/null
-
-# Restrict private key permissions immediately
-chmod 600 "$PRIV_KEY"
+openssl pkey -in "$PRIV_KEY" -pubout -out "$PUB_KEY"
+[ -s "$PUB_KEY" ] || { printf 'Error: failed to extract RSA public key.\n' >&2; exit 1; }
 
 printf '\nRSA key pair generated (%d bits):\n' "$KEY_BITS"
 printf '  Private key : %s\n' "$(cd -P "$(dirname -- "$PRIV_KEY")" && printf '%s/%s' "$PWD" "$(basename -- "$PRIV_KEY")")"

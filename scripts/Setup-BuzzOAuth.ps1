@@ -63,7 +63,7 @@
     - On Linux the dotnet cert store is a directory of PFX files under ~/.dotnet/. Restrict
       that directory's permissions: chmod 700 ~/.dotnet/corefx/cryptography/x509stores/my
     - On Windows you can make the private key non-exportable for extra hardening; see the
-      comment in the script near "New-SelfSignedCertificate".
+      comment near "X509Certificate2::new(...PersistKeySet...)" in the script.
 #>
 
 [CmdletBinding()]
@@ -339,6 +339,9 @@ $createNew = $null
 while ($createNew -notin @("N","Y")) {
     $createNew = (Read-Host "Create a new Application Identity account? [Y/n]").Trim().ToUpper()
     if ([string]::IsNullOrEmpty($createNew)) { $createNew = "Y" }
+    elseif ($createNew -notin @("N","Y")) {
+        Write-Host "  Please enter 'Y' or 'N'." -ForegroundColor Yellow
+    }
 }
 
 $oauthUserId = ""
@@ -533,9 +536,13 @@ $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
     [System.Security.Cryptography.X509Certificates.StoreLocation]::$StoreLocation
 )
 $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-$store.Add($cert)
-$store.Close()
+try {
+    $store.Add($cert)
+} finally {
+    $store.Close()
+}
 $thumbprint = $cert.Thumbprint
+$cert.Dispose()
 
 Write-Host " done" -ForegroundColor Green
 Write-Host "  Thumbprint: $thumbprint" -ForegroundColor Green

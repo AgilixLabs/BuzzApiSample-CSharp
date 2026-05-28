@@ -285,13 +285,15 @@ JsonNode response = client.VerifyResponse(
     await client.JsonRequest(HttpMethod.Get, "getdomains"));
 ```
 
-**Platform notes:**
+**Platform notes (Windows / Linux cert-store path):**
 - **Windows** — key stored in Windows CNG (can be hardware-backed via TPM).  Use
   `-StoreLocation LocalMachine` in the setup script for services running as SYSTEM.
-- **macOS** — key stored as a PEM file at `~/.config/buzz-oauth/private_key.pem` (chmod 600).
 - **Linux** — key stored in `~/.dotnet/corefx/cryptography/x509stores/my/` as a PFX file.
   Restrict permissions: `chmod 700 ~/.dotnet/corefx/cryptography/x509stores/my`.
   For high-security Linux deployments consider a hardware token or secrets manager instead.
+- **macOS** — `setup-buzz-oauth.sh` stores the private key as a PEM file at
+  `~/.config/buzz-oauth/private_key.pem` and writes `privateKeyPath` to `buzz-config.json`
+  (see "OAuth via PEM file" below).  The cert-store API above requires a manual Keychain import.
 
 ### OAuth via PEM file (simpler, use for development only)
 

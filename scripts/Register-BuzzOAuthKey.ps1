@@ -17,9 +17,6 @@
     A valid Bearer access token for an account with the Update User right on the
     Application Identity account.
 
-    To obtain an admin token via OAuth (if you already have another OAuth app set up):
-        .\scripts\Get-BuzzOAuthToken.ps1 ...
-
     To obtain a token using the legacy login3 command:
         $r = Invoke-RestMethod -Uri "$ServerUrl/cmd/login3" -Method Post `
                  -ContentType "application/json" `

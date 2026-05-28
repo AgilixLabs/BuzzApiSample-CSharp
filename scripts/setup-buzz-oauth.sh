@@ -465,7 +465,11 @@ else
         exit 1
     fi
 fi
-ok "  Store: $STORE_LOCATION"
+if [ "$(uname -s)" = "Darwin" ]; then
+    ok "  Key path: ${HOME}/.config/buzz-oauth/private_key.pem"
+else
+    ok "  Store: $STORE_LOCATION"
+fi
 
 # ── Step 4: Application info ──────────────────────────────────────────────────
 section "Step 4: Application Information"
@@ -653,6 +657,7 @@ PUB_KEY="${TMPDIR_SETUP}/public_key.pem"
 PFX_FILE="${TMPDIR_SETUP}/cert.pfx"
 THUMBPRINT=""
 PEM_PATH=""
+STORE_DIR=""
 
 # 1. Generate RSA private key (common to all platforms)
 openssl genpkey -algorithm RSA -pkeyopt "rsa_keygen_bits:${KEY_BITS}" \
