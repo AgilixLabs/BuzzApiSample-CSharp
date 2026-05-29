@@ -701,7 +701,7 @@ fi
 # 1. Generate RSA private key (common to all platforms)
 # umask 077 ensures the file is created 600 from the start, not briefly more permissive.
 ( umask 077 && openssl genpkey -algorithm RSA -pkeyopt "rsa_keygen_bits:${KEY_BITS}" \
-    -out "$PRIV_KEY" ) || die "Failed to generate RSA private key."
+    -quiet -out "$PRIV_KEY" ) || die "Failed to generate RSA private key."
 [ -s "$PRIV_KEY" ] || die "Failed to generate RSA private key."
 chmod 600 "$PRIV_KEY"
 

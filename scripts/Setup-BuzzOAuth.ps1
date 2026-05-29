@@ -496,13 +496,16 @@ Write-Host "  Store       : $StoreLocation/My"
 Write-Host ""
 Write-Host "Generating key..." -NoNewline
 
-# Generate RSA key
-if ($IsWindows) {
-    $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider($KeySize)
-    $rsa.PersistKeyInCsp = $false  # don't leave an orphaned CSP key container; only the cert store copy persists
+# Generate RSA key.
+# Use RSACng on Windows (CNG-backed key) so that GetRSAPrivateKey() returns a non-null
+# object in both .NET Framework (PS5.1) and .NET 5+ (PS7/dotnet run).
+# RSACryptoServiceProvider (CAPI) keys return null from GetRSAPrivateKey() in .NET 5+.
+$rsa = if ($IsWindows) {
+    [System.Security.Cryptography.RSACng]::new($KeySize)
 } else {
-    $rsa = [System.Security.Cryptography.RSA]::Create()
-    $rsa.KeySize = $KeySize
+    $r = [System.Security.Cryptography.RSA]::Create()
+    $r.KeySize = $KeySize
+    $r
 }
 
 # Build a self-signed certificate as a container for the key.
