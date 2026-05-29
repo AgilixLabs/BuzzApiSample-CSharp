@@ -594,7 +594,9 @@ namespace BuzzAPISample
                 throw new InvalidOperationException(
                     $"Certificate with thumbprint '{thumbprint}' not found in the {storeLocation}/My store. " +
                     "Run the setup script to install it.");
-            return found[0];
+            // Prefer the copy that has an accessible private key — the store can hold both
+            // a public-only copy and a private-key copy with the same thumbprint.
+            return found.OfType<X509Certificate2>().FirstOrDefault(c => c.HasPrivateKey) ?? found[0];
         }
 
         private static string Base64UrlEncode(byte[] data)
