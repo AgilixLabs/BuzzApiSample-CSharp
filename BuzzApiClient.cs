@@ -596,7 +596,12 @@ namespace BuzzAPISample
                     "Run the setup script to install it.");
             // Prefer the copy that has an accessible private key — the store can hold both
             // a public-only copy and a private-key copy with the same thumbprint.
-            return found.OfType<X509Certificate2>().FirstOrDefault(c => c.HasPrivateKey) ?? found[0];
+            X509Certificate2? withKey = found.OfType<X509Certificate2>().FirstOrDefault(c => c.HasPrivateKey);
+            if (withKey is null)
+                throw new InvalidOperationException(
+                    $"Certificate '{thumbprint}' was found in the {storeLocation}/My store but has no accessible private key. " +
+                    "Re-run the setup script to reinstall it with the private key.");
+            return withKey;
         }
 
         private static string Base64UrlEncode(byte[] data)
