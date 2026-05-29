@@ -118,6 +118,17 @@ Options:
     & openssl genpkey -algorithm RSA -pkeyopt "rsa_keygen_bits:$KeySize" -out $privateKeyPath
     if ($LASTEXITCODE -ne 0) { throw "openssl genpkey failed (exit $LASTEXITCODE)" }
 
+    # Restrict private key to current user only (matches the PS7+ branch hardening)
+    $acl = Get-Acl $privateKeyPath
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+        [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.Security.AccessControl.AccessControlType]::Allow)
+    $acl.AddAccessRule($rule)
+    Set-Acl $privateKeyPath $acl
+
     & openssl pkey -in $privateKeyPath -pubout -out $publicKeyPath
     if ($LASTEXITCODE -ne 0) { throw "openssl pkey -pubout failed (exit $LASTEXITCODE)" }
 }
