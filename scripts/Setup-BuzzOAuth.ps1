@@ -356,9 +356,8 @@ if ($createNew -eq "Y") {
     Write-Host "Fetching available domains..." -NoNewline
     try {
         $domainsResult = Invoke-RestMethod @_bp `
-            -Uri             "$ServerUrl/cmd/getdomains" `
-            -Method          Get `
-            -Headers         @{ Authorization = "Bearer $adminToken" }
+            -Uri             "$ServerUrl/cmd/getdomains?_token=$([Uri]::EscapeDataString($adminToken))" `
+            -Method          Get
         Write-Host " done" -ForegroundColor Green
 
         $domains = @()
@@ -424,9 +423,8 @@ if ($createNew -eq "Y") {
 
     try {
         $createResult = Invoke-RestMethod @_bp `
-            -Uri             "$ServerUrl/cmd/createusers2" `
+            -Uri             "$ServerUrl/cmd/createusers2?_token=$([Uri]::EscapeDataString($adminToken))" `
             -Method          Post `
-            -Headers         @{ Authorization = "Bearer $adminToken" } `
             -ContentType     "application/json" `
             -Body            $createBody
     } catch {

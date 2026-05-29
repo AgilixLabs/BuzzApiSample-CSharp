@@ -375,12 +375,13 @@ body = {
 print(json.dumps(body), end='')
 " "$OAUTH_USER_ID")"
 
+_token_enc="$(printf '%s' "$ADMIN_TOKEN" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(),safe=""),end="")')"
 delete_response="$(printf '%s' "$delete_body" | curl -s -X POST \
-    "${SERVER_URL}/cmd/deleteusers" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    "${SERVER_URL}/cmd/deleteusers?_token=${_token_enc}" \
     -H "Content-Type: application/json" \
     --data-binary @- \
     "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}")"
+_token_enc=""
 
 delete_code="$(buzz_get_field "$delete_response" code)"
 

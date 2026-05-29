@@ -301,18 +301,23 @@ PYEOF
 
 # ── Buzz API helpers ──────────────────────────────────────────────────────────
 
+# URL-encode a string (percent-encode all characters except unreserved ones).
+url_encode() { printf '%s' "$1" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(),safe=""),end="")'; }
+
 # POST a JSON body to a Buzz command endpoint.
-# buzz_post <command> <json_body> [bearer_token]
+# /cmd/* endpoints use _token query param for session tokens (not Authorization: Bearer).
+# buzz_post <command> <json_body> [session_token]
 # Returns the full response body.
 buzz_post() {
     local cmd="$1" body="$2" token="${3:-}"
-    local -a headers=("-H" "Content-Type: application/json")
-    [ -n "$token" ] && headers+=("-H" "Authorization: Bearer $token")
-    printf '%s' "$body" | curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -X POST "${SERVER_URL}/cmd/${cmd}" \
-        "${headers[@]}" --data-binary @-
+    local url="${SERVER_URL}/cmd/${cmd}"
+    [ -n "$token" ] && url="${url}?_token=$(url_encode "$token")"
+    printf '%s' "$body" | curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -X POST "$url" \
+        -H "Content-Type: application/json" --data-binary @-
 }
 
 # PUT raw content to a Buzz REST endpoint.
+# REST /api/* endpoints use Authorization: Bearer for OAuth tokens.
 buzz_put() {
     local url="$1" content_type="$2" body="$3" token="$4"
     local result http_code curl_exit
@@ -331,13 +336,18 @@ buzz_put() {
 }
 
 # GET a Buzz command endpoint.
+# /cmd/* endpoints use _token query param for session tokens (not Authorization: Bearer).
 buzz_get() {
     local cmd="$1" params="${2:-}" token="${3:-}"
     local url="${SERVER_URL}/cmd/${cmd}"
-    [ -n "$params" ] && url="${url}?${params}"
-    local -a headers=()
-    [ -n "$token" ] && headers+=("-H" "Authorization: Bearer $token")
-    curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" "${headers[@]}" "$url"
+    if [ -n "$params" ] && [ -n "$token" ]; then
+        url="${url}?${params}&_token=$(url_encode "$token")"
+    elif [ -n "$params" ]; then
+        url="${url}?${params}"
+    elif [ -n "$token" ]; then
+        url="${url}?_token=$(url_encode "$token")"
+    fi
+    curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" "$url"
 }
 
 # ── Banner ────────────────────────────────────────────────────────────────────

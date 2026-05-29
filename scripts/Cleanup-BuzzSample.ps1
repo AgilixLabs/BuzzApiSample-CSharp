@@ -228,8 +228,8 @@ $deleteBody = @{
 } | ConvertTo-Json -Depth 5
 
 try {
-    $deleteResp = Invoke-RestMethod @_bp -Method Post -Uri "$ServerUrl/cmd/deleteusers" `
-        -Headers @{ Authorization = "Bearer $AdminToken" } `
+    $deleteResp = Invoke-RestMethod @_bp -Method Post `
+        -Uri "$ServerUrl/cmd/deleteusers?_token=$([Uri]::EscapeDataString($AdminToken))" `
         -ContentType 'application/json' -Body $deleteBody -ErrorAction Stop
 
     # deleteusers can return code at several paths depending on API version; probe each safely.
