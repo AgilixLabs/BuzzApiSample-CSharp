@@ -84,7 +84,7 @@ namespace BuzzAPISample
         {
             _logger = logger;
 
-            serverUrl = serverUrl.TrimEnd('/');
+            serverUrl = serverUrl.Trim().TrimEnd('/');
             ServerUrl = serverUrl;
             UserAgent = userAgent;
             Verbose = verbose;
@@ -125,7 +125,7 @@ namespace BuzzAPISample
                 throw new Exception("userspace, username, and password are required for auto login");
             }
 
-            serverUrl = serverUrl.TrimEnd('/');
+            serverUrl = serverUrl.Trim().TrimEnd('/');
             ServerUrl = serverUrl;
             UserAgent = userAgent;
             Verbose = verbose;
@@ -190,7 +190,7 @@ namespace BuzzAPISample
             if (privateKey is null)
                 throw new ArgumentNullException(nameof(privateKey));
 
-            serverUrl = serverUrl.TrimEnd('/');
+            serverUrl = serverUrl.Trim().TrimEnd('/');
             ServerUrl = serverUrl;
             UserAgent = userAgent;
             Verbose = verbose;

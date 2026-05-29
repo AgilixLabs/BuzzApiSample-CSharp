@@ -74,16 +74,20 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
     $rsa.KeySize = $KeySize
     try {
         [System.IO.File]::WriteAllText($privateKeyPath, $rsa.ExportRSAPrivateKeyPem())
-        # Restrict private key to current user only (Windows ACL equivalent of chmod 600)
-        $acl = Get-Acl $privateKeyPath
-        $acl.SetAccessRuleProtection($true, $false)
-        $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
-        $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-            [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
-            [System.Security.AccessControl.FileSystemRights]::FullControl,
-            [System.Security.AccessControl.AccessControlType]::Allow)
-        $acl.AddAccessRule($rule)
-        Set-Acl $privateKeyPath $acl
+        # Restrict private key to current user only
+        if ($IsWindows) {
+            $acl = Get-Acl $privateKeyPath
+            $acl.SetAccessRuleProtection($true, $false)
+            $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+            $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+                [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
+                [System.Security.AccessControl.FileSystemRights]::FullControl,
+                [System.Security.AccessControl.AccessControlType]::Allow)
+            $acl.AddAccessRule($rule)
+            Set-Acl $privateKeyPath $acl
+        } else {
+            & chmod 600 $privateKeyPath
+        }
         [System.IO.File]::WriteAllText($publicKeyPath,  $rsa.ExportSubjectPublicKeyInfoPem())
     }
     finally {

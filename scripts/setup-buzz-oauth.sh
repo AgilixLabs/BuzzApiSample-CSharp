@@ -321,7 +321,7 @@ buzz_put() {
         --data-binary "$body") || curl_exit=$?
     if [ "$curl_exit" -ne 0 ]; then
         printf '\n' >&2
-        die "Network error reaching $url (curl exit $curl_exit). Check the server URL and connectivity."
+        die "curl failed for $url (exit $curl_exit). Check the server URL, connectivity, and any CURL_OPTS."
     fi
     http_code=$(printf '%s' "$result" | tail -n1)
     printf '%s' "$http_code"
