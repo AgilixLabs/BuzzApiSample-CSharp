@@ -71,6 +71,16 @@ while getopts ":s:t:u:k:p:h" opt; do
     esac
 done
 
+# ── Validate inputs ───────────────────────────────────────────────────────────
+die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+
+# Validate non-token required args first so the user isn't prompted for a token
+# only to hit a missing-argument error immediately after.
+[ -n "$SERVER_URL" ]      || die "Server URL is required (-s)"
+[ -n "$USER_ID" ]         || die "User ID is required (-u)"
+[ -n "$KID" ]             || die "Key ID is required (-k)"
+[ -n "$PUBLIC_KEY_PATH" ] || die "Public key path is required (-p)"
+
 # ── Resolve admin token ───────────────────────────────────────────────────────
 # Prefer BUZZ_ADMIN_TOKEN env var or interactive prompt over -t to keep the
 # token out of shell history and process listings.
@@ -83,14 +93,7 @@ if [ -z "$ADMIN_TOKEN" ]; then
     fi
 fi
 
-# ── Validate inputs ───────────────────────────────────────────────────────────
-die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
-
-[ -n "$SERVER_URL" ]      || die "Server URL is required (-s)"
 [ -n "$ADMIN_TOKEN" ]     || die "Admin token is required (-t, BUZZ_ADMIN_TOKEN, or interactive prompt)"
-[ -n "$USER_ID" ]         || die "User ID is required (-u)"
-[ -n "$KID" ]             || die "Key ID is required (-k)"
-[ -n "$PUBLIC_KEY_PATH" ] || die "Public key path is required (-p)"
 
 SERVER_URL="${SERVER_URL%/}"  # strip trailing slash
 

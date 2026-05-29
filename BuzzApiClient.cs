@@ -707,14 +707,16 @@ namespace BuzzAPISample
 
         private void TraceResponse(JsonNode? json)
         {
+            if (_logger is null || !_logger.IsEnabled(LogLevel.Debug))
+                return;
             if (json is not null)
             {
                 string text = CloneAndRedact(json).ToString();
-                _logger?.LogDebug("Response: {Content}", text[..Math.Min(text.Length, 1000)]);
+                _logger.LogDebug("Response: {Content}", text[..Math.Min(text.Length, 1000)]);
             }
             else
             {
-                _logger?.LogDebug("Response was empty or not json");
+                _logger.LogDebug("Response was empty or not json");
             }
         }
 
