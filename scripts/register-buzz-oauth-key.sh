@@ -123,7 +123,7 @@ printf '  File : %s\n' "$(cd -P "$(dirname -- "$PUBLIC_KEY_PATH")" && printf '%s
 printf '\n'
 
 # Capture HTTP status code alongside response body
-http_response=$(curl -s -w '\n%{http_code}' \
+http_response=$(curl -sL -w '\n%{http_code}' \
     -X PUT "$URL" \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/x-pem-file" \

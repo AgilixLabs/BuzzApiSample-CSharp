@@ -314,7 +314,7 @@ buzz_put() {
     local url="$1" content_type="$2" body="$3" token="$4"
     local result http_code curl_exit
     curl_exit=0
-    result=$(curl -s "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -w '\n%{http_code}' \
+    result=$(curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -w '\n%{http_code}' \
         -X PUT "$url" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: $content_type" \
