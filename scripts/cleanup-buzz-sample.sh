@@ -18,6 +18,8 @@
 
 set -euo pipefail
 
+die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+
 # Convert CURL_OPTS string to an array for safe quoted expansion.
 CURL_OPTS_ARR=()
 [ -n "${CURL_OPTS:-}" ] && read -ra CURL_OPTS_ARR <<< "$CURL_OPTS"
