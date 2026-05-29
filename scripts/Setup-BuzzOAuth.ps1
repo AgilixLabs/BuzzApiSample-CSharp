@@ -596,6 +596,7 @@ if ($regResponse.StatusCode -ne 204) {
     throw "Expected HTTP 204 from key registration, got $($regResponse.StatusCode)."
 }
 Write-Host " 204 OK" -ForegroundColor Green
+$adminToken = $null
 Write-Host ""
 
 # ── Step 8: Write buzz-config.json ────────────────────────────────────────────

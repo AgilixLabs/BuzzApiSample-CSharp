@@ -42,6 +42,10 @@
 
 set -euo pipefail
 
+# Convert CURL_OPTS string to an array for safe quoted expansion.
+CURL_OPTS_ARR=()
+[ -n "${CURL_OPTS:-}" ] && read -ra CURL_OPTS_ARR <<< "$CURL_OPTS"
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 SERVER_URL=""
 ADMIN_TOKEN=""
@@ -124,7 +128,7 @@ http_response=$(curl -s -w '\n%{http_code}' \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/x-pem-file" \
     --data-binary "@${PUBLIC_KEY_PATH}" \
-    ${CURL_OPTS:-})
+    "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}")
 
 http_code=$(printf '%s' "$http_response" | tail -n1)
 response_body=$(printf '%s' "$http_response" | sed '$d')

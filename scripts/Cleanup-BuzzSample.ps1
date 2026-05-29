@@ -227,7 +227,7 @@ $deleteBody = @{
 try {
     $deleteResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/deleteusers" `
         -Headers @{ Authorization = "Bearer $AdminToken" } `
-        -ContentType 'application/json' -Body $deleteBody -ErrorAction Stop
+        -ContentType 'application/json' -Body $deleteBody -UseBasicParsing -ErrorAction Stop
 
     # deleteusers can return code at several paths depending on API version; probe each safely.
     $deleteCode = Get-JsonProp $deleteResp 'code'
@@ -250,6 +250,7 @@ try {
 } catch {
     Write-Warning "Error deleting account: $($_.Exception.Message) — continuing."
 }
+$AdminToken = $null
 
 # ── Remove certificate from OS cert store ────────────────────────────────────
 if ($CertThumbprint) {

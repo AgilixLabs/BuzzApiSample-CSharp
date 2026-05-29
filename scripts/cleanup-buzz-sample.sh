@@ -18,6 +18,10 @@
 
 set -euo pipefail
 
+# Convert CURL_OPTS string to an array for safe quoted expansion.
+CURL_OPTS_ARR=()
+[ -n "${CURL_OPTS:-}" ] && read -ra CURL_OPTS_ARR <<< "$CURL_OPTS"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG_FILE="$PROJECT_ROOT/buzz-config.json"
@@ -252,7 +256,7 @@ print(json.dumps(body), end='')
     login_response="$(printf '%s' "$login_body" | curl -sL -X POST \
         -H "Content-Type: application/json" \
         --data-binary @- \
-        "${SERVER_URL}/cmd/login3" ${CURL_OPTS:-} || true)"
+        "${SERVER_URL}/cmd/login3" "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" || true)"
     login_body=""
 
     if [ -z "$login_response" ]; then
@@ -289,7 +293,7 @@ print(json.dumps(body), end='')
         login_response="$(printf '%s' "$mfa_body" | curl -sL -X POST \
             -H "Content-Type: application/json" \
             --data-binary @- \
-            "${SERVER_URL}/cmd/verifylogin" ${CURL_OPTS:-} || true)"
+            "${SERVER_URL}/cmd/verifylogin" "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" || true)"
         mfa_body=""
 
         if [ -z "$login_response" ]; then
@@ -330,7 +334,7 @@ if [ -n "$OAUTH_KID" ]; then
     key_response="$(curl -s -w '\n%{http_code}' \
         -X DELETE "$key_url" \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
-        ${CURL_OPTS:-})"
+        "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}")"
 
     key_http_code="$(printf '%s' "$key_response" | tail -n1)"
     key_body="$(printf '%s' "$key_response" | sed '$d')"
@@ -374,7 +378,7 @@ delete_response="$(printf '%s' "$delete_body" | curl -s -X POST \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
     --data-binary @- \
-    ${CURL_OPTS:-})"
+    "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}")"
 
 delete_code="$(buzz_get_field "$delete_response" code)"
 

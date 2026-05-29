@@ -61,6 +61,10 @@
 
 set -euo pipefail
 
+# Convert CURL_OPTS string to an array for safe quoted expansion.
+CURL_OPTS_ARR=()
+[ -n "${CURL_OPTS:-}" ] && read -ra CURL_OPTS_ARR <<< "$CURL_OPTS"
+
 # ── Platform check ────────────────────────────────────────────────────────────
 case "$(uname -s)" in
     Linux|Darwin) ;;
@@ -301,7 +305,7 @@ buzz_post() {
     local cmd="$1" body="$2" token="${3:-}"
     local -a headers=("-H" "Content-Type: application/json")
     [ -n "$token" ] && headers+=("-H" "Authorization: Bearer $token")
-    printf '%s' "$body" | curl -sL ${CURL_OPTS:-} -X POST "${SERVER_URL}/cmd/${cmd}" \
+    printf '%s' "$body" | curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -X POST "${SERVER_URL}/cmd/${cmd}" \
         "${headers[@]}" --data-binary @-
 }
 
@@ -310,7 +314,7 @@ buzz_put() {
     local url="$1" content_type="$2" body="$3" token="$4"
     local result http_code curl_exit
     curl_exit=0
-    result=$(curl -s ${CURL_OPTS:-} -w '\n%{http_code}' \
+    result=$(curl -s "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -w '\n%{http_code}' \
         -X PUT "$url" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: $content_type" \
@@ -330,7 +334,7 @@ buzz_get() {
     [ -n "$params" ] && url="${url}?${params}"
     local -a headers=()
     [ -n "$token" ] && headers+=("-H" "Authorization: Bearer $token")
-    curl -sL ${CURL_OPTS:-} "${headers[@]}" "$url"
+    curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" "${headers[@]}" "$url"
 }
 
 # ── Banner ────────────────────────────────────────────────────────────────────

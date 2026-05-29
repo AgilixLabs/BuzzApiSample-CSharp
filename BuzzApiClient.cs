@@ -12,7 +12,7 @@ namespace BuzzAPISample
     /// Makes requests to a Buzz API server.
     /// Supports OAuth 2.0 JWT client credentials (RFC 6749 + RFC 7523) and legacy password-based login.
     /// </summary>
-    public class BuzzApiClient
+    public class BuzzApiClient : IDisposable
     {
         private const int _retriesToMake = 5;
         private static readonly TimeSpan _initialWaitDuration = TimeSpan.FromMilliseconds(1000);
@@ -360,7 +360,7 @@ namespace BuzzAPISample
             // OAuth uses Authorization: Bearer header; password auth uses _token query parameter
             if (!_oauthEnabled && includeToken && Token is not null)
             {
-                parameters = ((parameters is not null) ? $"{parameters}&" : "") + $"_token={Token}";
+                parameters = ((parameters is not null) ? $"{parameters}&" : "") + $"_token={Uri.EscapeDataString(Token)}";
             }
             string requestUri = ServerUrl + "/cmd" + (cmd is not null ? $"/{cmd}" : "") + (parameters is not null ? $"?{parameters}" : "");
 
@@ -692,6 +692,8 @@ namespace BuzzAPISample
                 _logger?.LogDebug("Request content: {Content}", text[..Math.Min(text.Length, 1000)]);
             }
         }
+
+        public void Dispose() => _httpClient.Dispose();
 
         private static string RedactQueryParam(string uri, string paramName)
         {

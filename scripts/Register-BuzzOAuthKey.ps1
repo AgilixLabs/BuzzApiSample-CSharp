@@ -71,7 +71,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string] $ServerUrl,
-    [Parameter(Mandatory)] [string] $AdminToken,
+    [string] $AdminToken = "",        # Optional: prefer BUZZ_ADMIN_TOKEN env var or interactive prompt
     [Parameter(Mandatory)] [string] $UserId,
     [Parameter(Mandatory)] [string] $Kid,
     [Parameter(Mandatory)] [string] $PublicKeyPath
@@ -79,6 +79,22 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# ── Resolve admin token (env var > -AdminToken flag > interactive prompt) ────
+if ([string]::IsNullOrEmpty($AdminToken)) {
+    $envToken = [System.Environment]::GetEnvironmentVariable('BUZZ_ADMIN_TOKEN')
+    if (-not [string]::IsNullOrEmpty($envToken)) {
+        $AdminToken = $envToken
+    } else {
+        $tokenSec = Read-Host -AsSecureString "Admin Bearer token"
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($tokenSec)
+        try     { $AdminToken = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
+        finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+    }
+}
+if ([string]::IsNullOrEmpty($AdminToken)) {
+    throw "Admin token is required. Provide -AdminToken, set BUZZ_ADMIN_TOKEN, or enter it when prompted."
+}
 
 # ── Validate inputs ──────────────────────────────────────────────────────────
 $ServerUrl = $ServerUrl.TrimEnd('/')
@@ -161,5 +177,7 @@ catch {
             Write-Host $_.Exception.Message
         }
     }
+    $AdminToken = $null
     exit 1
 }
+$AdminToken = $null
