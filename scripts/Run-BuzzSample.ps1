@@ -79,6 +79,12 @@ function Test-SetupComplete {
                 [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
                 $thumbprint, $false)
             if ($certs.Count -eq 0) { return $false }
+            $cert = $certs[0]
+            if (-not $cert.HasPrivateKey) { return $false }
+            $rsa = $null
+            try { $rsa = $cert.GetRSAPrivateKey() } catch { return $false }
+            if ($null -eq $rsa) { return $false }
+            $rsa.Dispose()
         } finally {
             $store.Close()
         }

@@ -89,9 +89,9 @@ setup_complete() {
             store_dir="${HOME}/.dotnet/corefx/cryptography/x509stores/my"
         fi
         pfx_path="${store_dir}/${cert_thumbprint}.pfx"
-        [ -f "$pfx_path" ] || return 1
+        [ -r "$pfx_path" ] || return 1
     elif [ -n "$private_key_path" ]; then
-        [ -f "$private_key_path" ] || return 1
+        [ -r "$private_key_path" ] || return 1
     else
         return 1
     fi
