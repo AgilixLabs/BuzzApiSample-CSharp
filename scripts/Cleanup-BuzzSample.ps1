@@ -273,6 +273,7 @@ if ($CertThumbprint) {
         if ($certs.Count -gt 0) {
             foreach ($cert in $certs) {
                 $store.Remove($cert)
+                $cert.Dispose()
             }
             Write-Host "Certificate removed from $StoreLocation store."
         } else {

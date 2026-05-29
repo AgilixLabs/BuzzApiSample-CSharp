@@ -80,11 +80,15 @@ function Test-SetupComplete {
                 $thumbprint, $false)
             if ($certs.Count -eq 0) { return $false }
             $cert = $certs[0]
-            if (-not $cert.HasPrivateKey) { return $false }
-            $rsa = $null
-            try { $rsa = $cert.GetRSAPrivateKey() } catch { return $false }
-            if ($null -eq $rsa) { return $false }
-            $rsa.Dispose()
+            try {
+                if (-not $cert.HasPrivateKey) { return $false }
+                $rsa = $null
+                try { $rsa = $cert.GetRSAPrivateKey() } catch { return $false }
+                if ($null -eq $rsa) { return $false }
+                $rsa.Dispose()
+            } finally {
+                $cert.Dispose()
+            }
         } finally {
             $store.Close()
         }
