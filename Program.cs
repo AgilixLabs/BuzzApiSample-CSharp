@@ -34,11 +34,11 @@ namespace BuzzAPISample
             string applicationInformation = fileCfg["applicationInformation"]?.ToString() ?? string.Empty;
             string oauthUserId            = fileCfg["oauthUserId"]?.ToString()            ?? throw new InvalidOperationException("'oauthUserId' missing from buzz-config.json");
             string oauthKid               = fileCfg["oauthKid"]?.ToString()               ?? throw new InvalidOperationException("'oauthKid' missing from buzz-config.json");
-            string? certThumbprint        = fileCfg["certThumbprint"]?.ToString();
+            string? certThumbprint        = fileCfg["certThumbprint"]?.ToString()?.Trim();
             string? certStoreLocationStr  = fileCfg["certStoreLocation"]?.ToString();
-            string? privateKeyPath        = fileCfg["privateKeyPath"]?.ToString();
+            string? privateKeyPath        = fileCfg["privateKeyPath"]?.ToString()?.Trim();
 
-            if (string.IsNullOrEmpty(certThumbprint) && string.IsNullOrEmpty(privateKeyPath))
+            if (string.IsNullOrWhiteSpace(certThumbprint) && string.IsNullOrWhiteSpace(privateKeyPath))
                 throw new InvalidOperationException(
                     "No private key source in buzz-config.json. " +
                     "Run the setup script or see README.md.");

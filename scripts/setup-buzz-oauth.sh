@@ -710,7 +710,7 @@ else
     # Linux: wrap the key in a self-signed certificate and install as a PFX in the
     # .NET file-based certificate store.  The store is a directory of .pfx files;
     # .NET discovers them by thumbprint filename.
-    CERT_CN="BuzzOAuth-$(printf '%s' "${APP_NAME}-${KID}" | tr -cd 'A-Za-z0-9._-' | tr ' ' '-')"
+    CERT_CN="BuzzOAuth-$(printf '%s' "${APP_NAME}-${KID}" | tr ' ' '-' | tr -cd 'A-Za-z0-9._-')"
     info "Cert CN     : $CERT_CN"
     info "Store       : $STORE_LOCATION/My"
     printf '\n'

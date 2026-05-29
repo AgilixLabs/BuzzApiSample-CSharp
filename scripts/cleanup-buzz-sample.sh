@@ -400,6 +400,9 @@ esac
 # ── Remove certificate from local cert store ──────────────────────────────────
 if [ -n "$CERT_THUMBPRINT" ]; then
     printf '\n── Removing certificate from local cert store ───────────\n'
+    if ! printf '%s' "$CERT_THUMBPRINT" | grep -qE '^[0-9A-Fa-f]{40}$'; then
+        die "certThumbprint in buzz-config.json is not a valid SHA-1 hex string: $CERT_THUMBPRINT"
+    fi
     PFX_PATH="${STORE_DIR}/${CERT_THUMBPRINT}.pfx"
 
     if [ -f "$PFX_PATH" ]; then
