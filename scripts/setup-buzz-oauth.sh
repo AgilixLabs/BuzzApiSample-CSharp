@@ -98,10 +98,13 @@ while getopts ":s:o:l:b:h" opt; do
     esac
 done
 
-case "$STORE_LOCATION" in
-    CurrentUser|LocalMachine) ;;
-    *) printf 'Error: -l must be CurrentUser or LocalMachine\n' >&2; exit 1 ;;
-esac
+# -l is only meaningful on Linux; macOS always uses the PEM file path.
+if [ "$(uname -s)" = "Linux" ]; then
+    case "$STORE_LOCATION" in
+        CurrentUser|LocalMachine) ;;
+        *) printf 'Error: -l must be CurrentUser or LocalMachine\n' >&2; exit 1 ;;
+    esac
+fi
 
 # Root check for LocalMachine is deferred until after the interactive store
 # location prompt below, so it catches both flag-supplied and user-entered values.
