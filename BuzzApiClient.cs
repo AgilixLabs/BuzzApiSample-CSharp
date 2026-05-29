@@ -69,6 +69,7 @@ namespace BuzzAPISample
         private readonly RSA? _oauthRsa;
         private readonly string _oauthTokenEndpoint;
         private DateTimeOffset _oauthTokenExpiry;
+        private readonly SemaphoreSlim _oauthTokenLock = new(1, 1);
 
         /// <summary>
         /// Create a BuzzApiClient.
@@ -315,7 +316,16 @@ namespace BuzzAPISample
             {
                 if (_oauthEnabled && (Token is null || DateTimeOffset.UtcNow >= _oauthTokenExpiry - _oauthTokenRefreshMargin))
                 {
-                    await AuthenticateOAuth(cancel);
+                    await _oauthTokenLock.WaitAsync(cancel);
+                    try
+                    {
+                        if (Token is null || DateTimeOffset.UtcNow >= _oauthTokenExpiry - _oauthTokenRefreshMargin)
+                            await AuthenticateOAuth(cancel);
+                    }
+                    finally
+                    {
+                        _oauthTokenLock.Release();
+                    }
                 }
                 else if (_autoLoginEnabled && Token is null)
                 {
@@ -566,8 +576,12 @@ namespace BuzzAPISample
         {
             using X509Store store = new(StoreName.My, storeLocation);
             store.Open(OpenFlags.ReadOnly);
+            // Strip whitespace, colons, and any other non-hex characters so thumbprints
+            // copied from OpenSSL output (e.g. "AB:CD:EF:...") work without manual editing.
+            string normalizedThumbprint = new string(thumbprint.Where(
+                c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')).ToArray());
             X509Certificate2Collection found = store.Certificates.Find(
-                X509FindType.FindByThumbprint, string.Concat(thumbprint.Split()), validOnly: false);
+                X509FindType.FindByThumbprint, normalizedThumbprint, validOnly: false);
             if (found.Count == 0)
                 throw new InvalidOperationException(
                     $"Certificate with thumbprint '{thumbprint}' not found in the {storeLocation}/My store. " +

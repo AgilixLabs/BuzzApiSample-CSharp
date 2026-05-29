@@ -83,7 +83,7 @@ $ErrorActionPreference = "Stop"
 # -UseBasicParsing is required on Windows PowerShell 5.1 but unavailable in PowerShell 7+.
 $_bp = if ($PSVersionTable.PSVersion.Major -lt 6) { @{ UseBasicParsing = $true } } else { @{} }
 
-# ── Resolve admin token (env var > -AdminToken flag > interactive prompt) ────
+# ── Resolve admin token (-AdminToken flag > env var > interactive prompt) ────
 if ([string]::IsNullOrEmpty($AdminToken)) {
     $envToken = [System.Environment]::GetEnvironmentVariable('BUZZ_ADMIN_TOKEN')
     if (-not [string]::IsNullOrEmpty($envToken)) {

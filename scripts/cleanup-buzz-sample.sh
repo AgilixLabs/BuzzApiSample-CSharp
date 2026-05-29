@@ -416,8 +416,18 @@ fi
 # ── Remove private key file ───────────────────────────────────────────────────
 if [ -n "$PRIVATE_KEY_PATH" ] && [ -f "$PRIVATE_KEY_PATH" ]; then
     printf '\n── Removing private key file ────────────────────────────\n'
-    rm -f "$PRIVATE_KEY_PATH"
-    printf 'Private key deleted: %s\n' "$PRIVATE_KEY_PATH"
+    printf '  Path: %s\n' "$PRIVATE_KEY_PATH"
+    printf 'Delete this file? [y/N] '
+    read -r confirm_key
+    case "$confirm_key" in
+        [Yy])
+            rm -f "$PRIVATE_KEY_PATH"
+            printf 'Private key deleted: %s\n' "$PRIVATE_KEY_PATH"
+            ;;
+        *)
+            printf 'Skipped private key deletion.\n'
+            ;;
+    esac
 fi
 
 # ── Delete buzz-config.json ───────────────────────────────────────────────────

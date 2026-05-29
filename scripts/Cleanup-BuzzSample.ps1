@@ -287,8 +287,14 @@ if ($CertThumbprint) {
 if ($PrivKeyPath -and (Test-Path $PrivKeyPath)) {
     Write-Host ''
     Write-Host '── Removing private key file ────────────────────────────'
-    Remove-Item $PrivKeyPath -Force
-    Write-Host "Private key deleted: $PrivKeyPath"
+    Write-Host "  Path: $PrivKeyPath"
+    $confirmKey = Read-Host 'Delete this file? [y/N]'
+    if ($confirmKey -match '^[Yy]') {
+        Remove-Item $PrivKeyPath -Force
+        Write-Host "Private key deleted: $PrivKeyPath"
+    } else {
+        Write-Host 'Skipped private key deletion.'
+    }
 }
 
 # ── Delete buzz-config.json ───────────────────────────────────────────────────
