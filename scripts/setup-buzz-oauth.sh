@@ -317,8 +317,10 @@ buzz_post() {
     result=$(printf '%s' "$body" | curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -X POST "$url" \
         -H "Content-Type: application/json" --data-binary @-) || curl_exit=$?
     if [ "$curl_exit" -ne 0 ]; then
-        printf '\n' >&2
-        die "curl failed for $url (exit $curl_exit). Check the server URL, connectivity, and any CURL_OPTS."
+        # Print a diagnostic but return empty — callers handle retry/abort themselves.
+        # (The login loop checks for an empty response and retries interactively.)
+        printf '\n  curl failed for %s (exit %s). Check the server URL, connectivity, and any CURL_OPTS.\n' \
+            "$url" "$curl_exit" >&2
     fi
     printf '%s' "$result"
 }
