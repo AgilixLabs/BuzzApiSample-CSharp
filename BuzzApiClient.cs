@@ -345,7 +345,15 @@ namespace BuzzAPISample
                 if (_oauthEnabled)
                 {
                     _logger?.LogTrace("Re-authenticating via OAuth because the request returned code \"NoAuthentication\"");
-                    await AuthenticateOAuth(cancel);
+                    await _oauthTokenLock.WaitAsync(cancel);
+                    try
+                    {
+                        await AuthenticateOAuth(cancel);
+                    }
+                    finally
+                    {
+                        _oauthTokenLock.Release();
+                    }
                 }
                 else if (_autoLoginEnabled)
                 {
@@ -707,7 +715,11 @@ namespace BuzzAPISample
                 _logger?.LogDebug("Request: {RequestUri}", redactedUri);
         }
 
-        public void Dispose() => _httpClient.Dispose();
+        public void Dispose()
+        {
+            _httpClient.Dispose();
+            _oauthTokenLock.Dispose();
+        }
 
         private static string RedactQueryParam(string uri, string paramName)
         {
