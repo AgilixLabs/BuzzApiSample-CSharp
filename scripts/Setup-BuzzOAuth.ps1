@@ -645,5 +645,5 @@ Write-Host "Security reminders:" -ForegroundColor Yellow
 Write-Host "  - The private key is in the $StoreLocation certificate store, not a file."
 Write-Host "  - buzz-config.json contains no secrets and is gitignored."
 Write-Host "  - To rotate the key later, re-run this script with a new kid."
-Write-Host "  - To revoke all tokens immediately: POST $ServerUrl/api/oauth/revoke"
+Write-Host "  - To revoke an access token: POST $ServerUrl/api/oauth/revoke with form body token=<access_token>"
 Write-Host ""

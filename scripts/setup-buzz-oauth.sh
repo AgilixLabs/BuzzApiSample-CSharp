@@ -868,5 +868,5 @@ else
 fi
 printf '  - buzz-config.json contains no secrets and is gitignored.\n'
 printf '  - To rotate the key: re-run this script with a new kid.\n'
-printf '  - To revoke all tokens: POST %s/api/oauth/revoke\n' "$SERVER_URL"
+printf '  - To revoke an access token: POST %s/api/oauth/revoke with form body token=<access_token>\n' "$SERVER_URL"
 printf '\n'
