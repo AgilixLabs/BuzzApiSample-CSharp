@@ -80,6 +80,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# -UseBasicParsing is required on Windows PowerShell 5.1 but unavailable in PowerShell 7+.
+$_bp = if ($PSVersionTable.PSVersion.Major -lt 6) { @{ UseBasicParsing = $true } } else { @{} }
+
 # ── Resolve admin token (env var > -AdminToken flag > interactive prompt) ────
 if ([string]::IsNullOrEmpty($AdminToken)) {
     $envToken = [System.Environment]::GetEnvironmentVariable('BUZZ_ADMIN_TOKEN')
@@ -125,12 +128,11 @@ Write-Host "  Key file: $([System.IO.Path]::GetFullPath($PublicKeyPath))"
 Write-Host ""
 
 try {
-    $response = Invoke-WebRequest `
+    $response = Invoke-WebRequest @_bp `
         -Uri             $url `
         -Method          Put `
         -Headers         @{ Authorization = "Bearer $AdminToken" } `
         -ContentType     "application/x-pem-file" `
-        -UseBasicParsing `
         -Body            ([System.Text.Encoding]::UTF8.GetBytes($publicKeyPem))
 
     if ($response.StatusCode -eq 204) {

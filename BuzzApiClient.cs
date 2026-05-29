@@ -387,7 +387,7 @@ namespace BuzzAPISample
                         httpRequestMessage.Headers.Accept.Add(new(acceptsContentType));
                     }
 
-                    await TraceRequestAsync(requestUri, content);
+                    TraceRequest(requestUri);
 
                     try
                     {
@@ -682,15 +682,15 @@ namespace BuzzAPISample
             _logger?.LogDebug("Will make request retry #{Attempt} after {WaitTimeMs} milliseconds because of error: {ErrorMessage}", attempt, waitMs, e.Message);
         }
 
-        private async Task TraceRequestAsync(string requestUri, HttpContent? content)
+        private void TraceRequest(string requestUri)
         {
             // Strip _token query parameter before logging — password-auth paths append it to the URI.
-            _logger?.LogInformation("Request: {RequestUri}", RedactQueryParam(requestUri, "_token"));
-            if (content is StringContent && _logger?.IsEnabled(LogLevel.Debug) == true)
-            {
-                string text = await content.ReadAsStringAsync();
-                _logger?.LogDebug("Request content: {Content}", text[..Math.Min(text.Length, 1000)]);
-            }
+            // Body is never logged: request bodies contain credentials (password, MFA code, client_assertion).
+            string redactedUri = RedactQueryParam(requestUri, "_token");
+            if (Verbose)
+                _logger?.LogInformation("Request: {RequestUri}", redactedUri);
+            else
+                _logger?.LogDebug("Request: {RequestUri}", redactedUri);
         }
 
         public void Dispose() => _httpClient.Dispose();

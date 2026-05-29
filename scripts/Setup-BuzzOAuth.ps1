@@ -79,6 +79,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# -UseBasicParsing is required on Windows PowerShell 5.1 but unavailable in PowerShell 7+.
+$_bp = if ($PSVersionTable.PSVersion.Major -lt 6) { @{ UseBasicParsing = $true } } else { @{} }
+
 # $IsWindows / $IsLinux / $IsMacOS are automatic variables in PS6+; define them for PS5.1
 if ($null -eq (Get-Variable 'IsWindows' -ErrorAction SilentlyContinue)) {
     $IsWindows = $env:OS -eq 'Windows_NT'
@@ -204,12 +207,11 @@ while ($null -eq $adminToken) {
 
     $loginResult = $null
     try {
-        $loginResult = Invoke-RestMethod `
+        $loginResult = Invoke-RestMethod @_bp `
             -Uri             "$ServerUrl/cmd/login3" `
             -Method          Post `
             -ContentType     "application/json" `
-            -Body            $loginBody `
-            -UseBasicParsing
+            -Body            $loginBody
     } catch {
         $loginBody = $null
         Write-Host ""
@@ -240,12 +242,11 @@ while ($null -eq $adminToken) {
         $partialToken = $null
 
         try {
-            $loginResult = Invoke-RestMethod `
+            $loginResult = Invoke-RestMethod @_bp `
                 -Uri             "$ServerUrl/cmd/$mfaCmd" `
                 -Method          Post `
                 -ContentType     "application/json" `
-                -Body            $mfaBody `
-                -UseBasicParsing
+                -Body            $mfaBody
         } catch {
             $mfaBody = $null
             Write-Host ""
@@ -318,6 +319,7 @@ if ($StoreLocation -eq 'LocalMachine') {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
         [Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin) {
+        $adminToken = $null
         throw "LocalMachine certificate store requires Administrator rights.`nRe-run PowerShell as Administrator and try again."
     }
 }
@@ -353,11 +355,10 @@ $oauthUserId = ""
 if ($createNew -eq "Y") {
     Write-Host "Fetching available domains..." -NoNewline
     try {
-        $domainsResult = Invoke-RestMethod `
+        $domainsResult = Invoke-RestMethod @_bp `
             -Uri             "$ServerUrl/cmd/getdomains" `
             -Method          Get `
-            -Headers         @{ Authorization = "Bearer $adminToken" } `
-            -UseBasicParsing
+            -Headers         @{ Authorization = "Bearer $adminToken" }
         Write-Host " done" -ForegroundColor Green
 
         $domains = @()
@@ -422,20 +423,21 @@ if ($createNew -eq "Y") {
     } | ConvertTo-Json -Depth 10
 
     try {
-        $createResult = Invoke-RestMethod `
+        $createResult = Invoke-RestMethod @_bp `
             -Uri             "$ServerUrl/cmd/createusers2" `
             -Method          Post `
             -Headers         @{ Authorization = "Bearer $adminToken" } `
             -ContentType     "application/json" `
-            -Body            $createBody `
-            -UseBasicParsing
+            -Body            $createBody
     } catch {
+        $adminToken = $null
         Write-Host ""
         throw "CreateUsers2 request failed: $_"
     }
 
     $createCode = Get-BuzzCode $createResult
     if ($createCode -ne "OK") {
+        $adminToken = $null
         throw "CreateUsers2 failed: code=$createCode  $(ConvertTo-Json $createResult -Depth 5)"
     }
 
@@ -449,6 +451,7 @@ if ($createNew -eq "Y") {
     } else { $null }
 
     if ([string]::IsNullOrEmpty($oauthUserId)) {
+        $adminToken = $null
         throw "CreateUsers2 succeeded but returned no userid.`nResponse: $(ConvertTo-Json $createResult -Depth 5)"
     }
     Write-Host " OK (userid: $oauthUserId)" -ForegroundColor Green
@@ -483,6 +486,7 @@ $defaultKid = "$([datetime]::UtcNow.Year)-q$quarter"
 $kid = (Read-Host "Key ID (kid) for this key [default: $defaultKid]").Trim()
 if ([string]::IsNullOrEmpty($kid)) { $kid = $defaultKid }
 if ($kid -notmatch '^[A-Za-z0-9\-_\.]{1,128}$') {
+    $adminToken = $null
     throw "Invalid kid '$kid'. Allowed: ASCII letters, digits, -, _, .  Max 128 chars."
 }
 
@@ -574,14 +578,14 @@ $keyRegUrl = "$ServerUrl/api/users/$oauthUserId/keys/$kid"
 Write-Host "  PUT $keyRegUrl" -NoNewline
 
 try {
-    $regResponse = Invoke-WebRequest `
+    $regResponse = Invoke-WebRequest @_bp `
         -Uri             $keyRegUrl `
         -Method          Put `
         -Headers         @{ Authorization = "Bearer $adminToken" } `
         -ContentType     "application/x-pem-file" `
-        -UseBasicParsing `
         -Body            ([System.Text.Encoding]::UTF8.GetBytes($publicKeyPem))
 } catch {
+    $adminToken = $null
     Write-Host ""
     $sc = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $null }
     if ($sc -eq 400) {
@@ -593,6 +597,7 @@ try {
 }
 
 if ($regResponse.StatusCode -ne 204) {
+    $adminToken = $null
     throw "Expected HTTP 204 from key registration, got $($regResponse.StatusCode)."
 }
 Write-Host " 204 OK" -ForegroundColor Green

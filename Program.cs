@@ -71,7 +71,7 @@ namespace BuzzAPISample
                     rsa.ImportFromPem(File.ReadAllText(privateKeyPath!));
                 }
 
-                BuzzApiClient client = new(serverUrl, userAgent, oauthUserId, oauthKid, rsa, verbose: false, logger: logger);
+                using BuzzApiClient client = new(serverUrl, userAgent, oauthUserId, oauthKid, rsa, verbose: false, logger: logger);
 
                 await RunSample(client, logger);
             }

@@ -52,7 +52,7 @@ chmod +x scripts/run-buzz-sample.sh
 ./scripts/run-buzz-sample.sh
 ```
 
-**Windows** (PowerShell 5.1 or 7+):
+**Windows** (Windows PowerShell 5.1):
 ```powershell
 .\scripts\Run-BuzzSample.ps1
 ```

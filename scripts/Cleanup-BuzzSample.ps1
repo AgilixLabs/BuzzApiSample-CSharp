@@ -23,6 +23,9 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# -UseBasicParsing is required on Windows PowerShell 5.1 but unavailable in PowerShell 7+.
+$_bp = if ($PSVersionTable.PSVersion.Major -lt 6) { @{ UseBasicParsing = $true } } else { @{} }
+
 Add-Type -AssemblyName System.Security
 
 # Safe property accessor — returns $null for missing fields without triggering StrictMode errors.
@@ -122,8 +125,8 @@ while ($null -eq $AdminToken) {
 
     $loginResp = $null
     try {
-        $loginResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/login3" `
-            -ContentType 'application/json' -Body $loginBody -UseBasicParsing -ErrorAction Stop
+        $loginResp = Invoke-RestMethod @_bp -Method Post -Uri "$ServerUrl/cmd/login3" `
+            -ContentType 'application/json' -Body $loginBody -ErrorAction Stop
     } catch {
         Write-Host ''
         Write-Host "  Network error: $_" -ForegroundColor Red
@@ -152,8 +155,8 @@ while ($null -eq $AdminToken) {
         $mfaToken = $null
 
         try {
-            $loginResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/verifylogin" `
-                -ContentType 'application/json' -Body $mfaBody -UseBasicParsing -ErrorAction Stop
+            $loginResp = Invoke-RestMethod @_bp -Method Post -Uri "$ServerUrl/cmd/verifylogin" `
+                -ContentType 'application/json' -Body $mfaBody -ErrorAction Stop
         } catch {
             $mfaBody = $null
             Write-Host ''
@@ -199,8 +202,8 @@ Write-Host "── Deleting OAuth key (kid: $OAuthKid) ────────�
 if ($OAuthKid) {
     $keyUrl = "$ServerUrl/api/users/$OAuthUserId/keys/$OAuthKid"
     try {
-        $keyResp = Invoke-WebRequest -Method Delete -Uri $keyUrl `
-            -Headers @{ Authorization = "Bearer $AdminToken" } -UseBasicParsing -ErrorAction Stop
+        $keyResp = Invoke-WebRequest @_bp -Method Delete -Uri $keyUrl `
+            -Headers @{ Authorization = "Bearer $AdminToken" } -ErrorAction Stop
         Write-Host "OAuth key deleted (HTTP $($keyResp.StatusCode))."
     } catch {
         $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $null }
@@ -225,9 +228,9 @@ $deleteBody = @{
 } | ConvertTo-Json -Depth 5
 
 try {
-    $deleteResp = Invoke-RestMethod -Method Post -Uri "$ServerUrl/cmd/deleteusers" `
+    $deleteResp = Invoke-RestMethod @_bp -Method Post -Uri "$ServerUrl/cmd/deleteusers" `
         -Headers @{ Authorization = "Bearer $AdminToken" } `
-        -ContentType 'application/json' -Body $deleteBody -UseBasicParsing -ErrorAction Stop
+        -ContentType 'application/json' -Body $deleteBody -ErrorAction Stop
 
     # deleteusers can return code at several paths depending on API version; probe each safely.
     $deleteCode = Get-JsonProp $deleteResp 'code'

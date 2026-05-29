@@ -102,7 +102,17 @@ if ($ForceSetup -or -not (Test-SetupComplete)) {
     Write-Host ''
 
     try {
-        & $SetupScript
+        if ($PSVersionTable.PSVersion.Major -ge 6) {
+            # Setup-BuzzOAuth.ps1 targets Windows PowerShell 5.1; re-invoke under powershell.exe
+            $ps51 = Get-Command powershell.exe -ErrorAction SilentlyContinue
+            if ($null -eq $ps51) {
+                throw "Setup-BuzzOAuth.ps1 requires Windows PowerShell 5.1 (powershell.exe), which was not found on PATH."
+            }
+            & powershell.exe -File $SetupScript
+            if ($LASTEXITCODE -ne 0) { throw "Setup script exited with code $LASTEXITCODE." }
+        } else {
+            & $SetupScript
+        }
     } catch {
         $setupErrorMessage = $_.Exception.Message
         if ([string]::IsNullOrWhiteSpace($setupErrorMessage)) { $setupErrorMessage = $_.ToString() }
