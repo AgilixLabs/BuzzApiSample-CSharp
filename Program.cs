@@ -26,7 +26,7 @@ namespace BuzzAPISample
                     "  Windows    : .\\scripts\\Run-BuzzSample.ps1\n" +
                     "  Manual     : see README.md");
 
-            JsonNode fileCfg = JsonNode.Parse(File.ReadAllText("buzz-config.json"))
+            JsonObject fileCfg = JsonNode.Parse(File.ReadAllText("buzz-config.json")) as JsonObject
                 ?? throw new InvalidOperationException("buzz-config.json is empty or does not contain a JSON object.");
 
             string serverUrl              = fileCfg["serverUrl"]?.ToString()              ?? throw new InvalidOperationException("'serverUrl' missing from buzz-config.json");
