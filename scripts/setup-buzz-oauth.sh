@@ -325,17 +325,18 @@ buzz_post() {
     printf '%s' "$result"
 }
 
-# PUT raw content to a Buzz REST endpoint.
+# PUT a file to a Buzz REST endpoint.
+# file_path must be a plain path (no leading @); curl reads the file contents.
 # REST /api/* endpoints use Authorization: Bearer for OAuth tokens.
 buzz_put() {
-    local url="$1" content_type="$2" body="$3" token="$4"
+    local url="$1" content_type="$2" file_path="$3" token="$4"
     local result http_code curl_exit
     curl_exit=0
     result=$(curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -w '\n%{http_code}' \
         -X PUT "$url" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: $content_type" \
-        --data-binary "$body") || curl_exit=$?
+        --data-binary "@${file_path}") || curl_exit=$?
     if [ "$curl_exit" -ne 0 ]; then
         printf '\n' >&2
         die "curl failed for $url (exit $curl_exit). Check the server URL, connectivity, and any CURL_OPTS."
@@ -791,7 +792,7 @@ KEY_URL="${SERVER_URL}/api/users/${OAUTH_USER_ID}/keys/${KID}"
 info "PUT $KEY_URL"
 printf '  Uploading...'
 
-HTTP_CODE=$(buzz_put "$KEY_URL" "application/x-pem-file" "@${PUB_KEY}" "$ADMIN_TOKEN")
+HTTP_CODE=$(buzz_put "$KEY_URL" "application/x-pem-file" "$PUB_KEY" "$ADMIN_TOKEN")
 
 case "$HTTP_CODE" in
     204)
