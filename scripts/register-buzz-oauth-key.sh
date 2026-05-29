@@ -8,7 +8,7 @@
 #   -s URL    Buzz API server URL, e.g. https://api.agilixbuzz.com  (no trailing slash)
 #   -t TOKEN  Bearer token (optional — prefer BUZZ_ADMIN_TOKEN env var or interactive prompt to
 #             avoid exposing the token in shell history and process listings)
-#   -u ID     userid of the Application Identity account (from OAuth Setup Step 1)
+#   -u ID     userid of the Application Identity account (from OAuth Setup Step 5)
 #   -k KID    Key ID for this key, e.g. "2025-q2".
 #             Allowed characters: ASCII letters, digits, -, _, .  Max 128 chars.
 #             PUTting an existing kid REPLACES the key immediately — use a new kid to rotate.
