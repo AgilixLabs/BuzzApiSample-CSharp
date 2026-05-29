@@ -126,12 +126,16 @@ printf '  File : %s\n' "$(cd -P "$(dirname -- "$PUBLIC_KEY_PATH")" && printf '%s
 printf '\n'
 
 # Capture HTTP status code alongside response body
+curl_exit=0
 http_response=$(curl -sL -w '\n%{http_code}' \
     -X PUT "$URL" \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/x-pem-file" \
     --data-binary "@${PUBLIC_KEY_PATH}" \
-    "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}")
+    "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}") || curl_exit=$?
+if [ "$curl_exit" -ne 0 ]; then
+    die "curl failed for $URL (exit $curl_exit). Check the server URL, connectivity, and any CURL_OPTS."
+fi
 
 http_code=$(printf '%s' "$http_response" | tail -n1)
 response_body=$(printf '%s' "$http_response" | sed '$d')

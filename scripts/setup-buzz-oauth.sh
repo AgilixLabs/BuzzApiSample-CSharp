@@ -312,8 +312,15 @@ buzz_post() {
     local cmd="$1" body="$2" token="${3:-}"
     local url="${SERVER_URL}/cmd/${cmd}"
     [ -n "$token" ] && url="${url}?_token=$(url_encode "$token")"
-    printf '%s' "$body" | curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -X POST "$url" \
-        -H "Content-Type: application/json" --data-binary @-
+    local result curl_exit
+    curl_exit=0
+    result=$(printf '%s' "$body" | curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -X POST "$url" \
+        -H "Content-Type: application/json" --data-binary @-) || curl_exit=$?
+    if [ "$curl_exit" -ne 0 ]; then
+        printf '\n' >&2
+        die "curl failed for $url (exit $curl_exit). Check the server URL, connectivity, and any CURL_OPTS."
+    fi
+    printf '%s' "$result"
 }
 
 # PUT raw content to a Buzz REST endpoint.
