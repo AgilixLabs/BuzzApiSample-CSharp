@@ -19,16 +19,15 @@ namespace BuzzAPISample
              * setup script directly.  buzz-config.json is always preferred over any
              * hardcoded values. */
 
-            JsonNode? fileCfg = File.Exists("buzz-config.json")
-                ? JsonNode.Parse(File.ReadAllText("buzz-config.json"))
-                : null;
-
-            if (fileCfg is null)
+            if (!File.Exists("buzz-config.json"))
                 throw new FileNotFoundException(
                     "buzz-config.json not found.\n" +
                     "  Linux/macOS: ./scripts/run-buzz-sample.sh\n" +
                     "  Windows    : .\\scripts\\Run-BuzzSample.ps1\n" +
                     "  Manual     : see README.md");
+
+            JsonNode fileCfg = JsonNode.Parse(File.ReadAllText("buzz-config.json"))
+                ?? throw new InvalidOperationException("buzz-config.json is empty or does not contain a JSON object.");
 
             string serverUrl              = fileCfg["serverUrl"]?.ToString()              ?? throw new InvalidOperationException("'serverUrl' missing from buzz-config.json");
             string contactInformation     = fileCfg["contactInformation"]?.ToString()     ?? string.Empty;

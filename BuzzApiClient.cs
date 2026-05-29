@@ -709,13 +709,35 @@ namespace BuzzAPISample
         {
             if (json is not null)
             {
-                string text = json.ToString();
-                _logger?.LogDebug("Response with json content: {Content}", text[..Math.Min(text.Length, 1000)]);
+                string text = CloneAndRedact(json).ToString();
+                _logger?.LogDebug("Response: {Content}", text[..Math.Min(text.Length, 1000)]);
             }
             else
             {
                 _logger?.LogDebug("Response was empty or not json");
             }
+        }
+
+        private static readonly HashSet<string> s_sensitiveFields = new(StringComparer.OrdinalIgnoreCase)
+            { "token", "access_token", "refresh_token", "password", "client_assertion", "client_secret" };
+
+        private static JsonNode CloneAndRedact(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                var result = new JsonObject();
+                foreach (var (key, value) in obj)
+                    result[key] = s_sensitiveFields.Contains(key) ? JsonValue.Create("[REDACTED]") : (value is null ? null : CloneAndRedact(value));
+                return result;
+            }
+            if (node is JsonArray arr)
+            {
+                var result = new JsonArray();
+                foreach (var item in arr)
+                    result.Add(item is null ? null : CloneAndRedact(item));
+                return result;
+            }
+            return node.DeepClone();
         }
     }
 }
