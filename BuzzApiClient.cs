@@ -279,7 +279,7 @@ namespace BuzzAPISample
 
             if (jsonToVerify["code"]?.ToString() != "OK")
             {
-                string responseText = responseJson?.ToString() ?? "";
+                string responseText = CloneAndRedact(responseJson).ToString();
                 _logger?.LogError("Buzz API call failed. Expected response.code to be OK, found: {ResponseText}", responseText);
                 throw new Exception($"Buzz API call failed. Expected response.code to be OK, found: {responseText}");
             }
@@ -478,7 +478,7 @@ namespace BuzzAPISample
 
             if (string.IsNullOrEmpty(accessToken))
             {
-                throw new Exception($"OAuth token response did not contain an access_token: {tokenJson}");
+                throw new Exception("OAuth token response did not contain an access_token.");
             }
 
             int expiresIn = 3600;
