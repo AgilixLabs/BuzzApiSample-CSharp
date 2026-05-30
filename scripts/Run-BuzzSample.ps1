@@ -82,8 +82,21 @@ function Test-SetupComplete {
             $cert = $certs[0]
             if (-not $cert.HasPrivateKey) { $cert.Dispose(); return $false }
             $rsa = $null
-            try { $rsa = $cert.GetRSAPrivateKey() } catch { $cert.Dispose(); return $false }
-            if ($null -eq $rsa) { $cert.Dispose(); return $false }
+            # GetRSAPrivateKey() is an extension method in .NET Framework (PS5.1) and cannot
+            # be called as an instance method there.  Use the static form which works in both
+            # PS5.1 (.NET Framework) and PS7+ (.NET 5+).
+            try {
+                $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+            } catch {
+                $cert.Dispose(); return $false
+            }
+            # In .NET Framework (PS5.1), CAPI-backed certs return RSACryptoServiceProvider
+            # (non-null), but dotnet run uses .NET 5+ which returns null for CAPI keys.
+            # Reject CAPI certs so setup re-runs and creates a CNG (RSACng) cert instead.
+            if ($null -eq $rsa -or $rsa -is [System.Security.Cryptography.RSACryptoServiceProvider]) {
+                if ($null -ne $rsa) { $rsa.Dispose() }
+                $cert.Dispose(); return $false
+            }
             $rsa.Dispose()
             $cert.Dispose()
         } finally {
