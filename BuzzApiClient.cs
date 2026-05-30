@@ -474,47 +474,81 @@ namespace BuzzAPISample
             _logger?.LogInformation("Requesting OAuth access token");
 
             string assertion = BuildClientAssertion(_oauthRsa!, _oauthUserId, _oauthKid, _oauthTokenEndpoint);
-
-            using var formContent = new FormUrlEncodedContent(new[]
+            var formFields = new[]
             {
                 new KeyValuePair<string, string>("grant_type",            "client_credentials"),
                 new KeyValuePair<string, string>("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
                 new KeyValuePair<string, string>("client_assertion",      assertion),
-            });
+            };
 
-            using HttpResponseMessage response = await _httpClient.PostAsync(_oauthTokenEndpoint, formContent, cancel);
-
-            if (!response.IsSuccessStatusCode)
+            int retriesRemaining = _retriesToMake;
+            TimeSpan baseWaitDuration = _initialWaitDuration;
+            while (true)
             {
-                string body = await response.Content.ReadAsStringAsync(cancel);
-                _logger?.LogError("OAuth token request failed: {StatusCode} {Body}", response.StatusCode, body);
-                throw new Exception($"OAuth token request failed ({response.StatusCode}): {body}");
-            }
+                RetryConditionHeaderValue? retryHeader = null;
+                HttpResponseMessage? response = null;
+                try
+                {
+                    using var formContent = new FormUrlEncodedContent(formFields);
+                    response = await _httpClient.PostAsync(_oauthTokenEndpoint, formContent, cancel);
+                    retryHeader = response.Headers.RetryAfter;
 
-            JsonNode? tokenJson = await JsonNode.ParseAsync(await response.Content.ReadAsStreamAsync(cancel), cancellationToken: cancel);
-            string? accessToken = tokenJson?["access_token"]?.ToString();
+                    if ((response.StatusCode == HttpStatusCode.TooManyRequests || response.StatusCode == HttpStatusCode.ServiceUnavailable) && retriesRemaining > 0)
+                    {
+                        TimeSpan wait = GetRetryWaitDurationFromResponse(response, retryHeader, baseWaitDuration);
+                        _logger?.LogWarning("OAuth token request rate-limited ({StatusCode}), backing off {WaitMs}ms, {Retries} retries remaining",
+                            response.StatusCode, (int)wait.TotalMilliseconds, retriesRemaining);
+                        response.Dispose();
+                        await Task.Delay(wait, cancel);
+                        retriesRemaining--;
+                        baseWaitDuration = TimeSpan.FromMilliseconds(baseWaitDuration.TotalMilliseconds * 2);
+                        continue;
+                    }
 
-            if (string.IsNullOrEmpty(accessToken))
-            {
-                throw new Exception("OAuth token response did not contain an access_token.");
-            }
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        string body = await response.Content.ReadAsStringAsync(cancel);
+                        _logger?.LogError("OAuth token request failed: {StatusCode} {Body}", response.StatusCode, body);
+                        throw new Exception($"OAuth token request failed ({response.StatusCode}): {body}");
+                    }
 
-            int expiresIn = 3600;
-            if (tokenJson?["expires_in"] is { } expiresInNode)
-            {
-                try { expiresIn = expiresInNode.GetValue<int>(); }
+                    JsonNode? tokenJson = await JsonNode.ParseAsync(await response.Content.ReadAsStreamAsync(cancel), cancellationToken: cancel);
+                    string? accessToken = tokenJson?["access_token"]?.ToString();
+                    if (string.IsNullOrEmpty(accessToken))
+                        throw new Exception("OAuth token response did not contain an access_token.");
+
+                    int expiresIn = 3600;
+                    if (tokenJson?["expires_in"] is { } expiresInNode)
+                    {
+                        try { expiresIn = expiresInNode.GetValue<int>(); }
+                        catch
+                        {
+                            if (int.TryParse(expiresInNode.ToString(), out int parsed) && parsed > 0)
+                                expiresIn = parsed;
+                        }
+                    }
+                    if (expiresIn <= 0)
+                        expiresIn = 3600;
+                    Token = accessToken;
+                    _oauthTokenExpiry = DateTimeOffset.UtcNow.AddSeconds(expiresIn);
+                    _logger?.LogInformation("OAuth token obtained, expires in {ExpiresIn}s", expiresIn);
+                    return;
+                }
+                catch (Exception e) when (retriesRemaining > 0 && (e is not HttpRequestException rex || DoesStatusCodeAllowRetry(rex.StatusCode)))
+                {
+                    response?.Dispose();
+                    TimeSpan wait = GetRetryWaitDuration(retryHeader, baseWaitDuration);
+                    _logger?.LogTrace("OAuth token request retrying after {ErrorType}: {Message}", e.GetType(), e.Message);
+                    await Task.Delay(wait, cancel);
+                    retriesRemaining--;
+                    baseWaitDuration = TimeSpan.FromMilliseconds(baseWaitDuration.TotalMilliseconds * 2);
+                }
                 catch
                 {
-                    if (int.TryParse(expiresInNode.ToString(), out int parsed) && parsed > 0)
-                        expiresIn = parsed;
+                    response?.Dispose();
+                    throw;
                 }
             }
-            if (expiresIn <= 0)
-                expiresIn = 3600;
-            Token = accessToken;
-            _oauthTokenExpiry = DateTimeOffset.UtcNow.AddSeconds(expiresIn);
-
-            _logger?.LogInformation("OAuth token obtained, expires in {ExpiresIn}s", expiresIn);
         }
 
         /// <summary>

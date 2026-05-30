@@ -95,9 +95,14 @@ except Exception:
 # Supported fields: code  token  partial_token  message
 buzz_get_field() {
     local resp="$1" field="$2"
-    python3 - "$resp" "$field" <<'PYEOF'
+    # Pipe the response via stdin so it does not appear in process listings and
+    # cannot hit OS argv length limits.  Script is captured in a variable so
+    # python3 receives it via -c, leaving stdin free for the data pipe.
+    local _py
+    _py=$(cat <<'PYEOF'
 import sys
-resp, field = sys.argv[1], sys.argv[2]
+field = sys.argv[1]
+resp = sys.stdin.read()
 result = ''
 try:
     import json
@@ -141,6 +146,8 @@ if not result:
 if result:
     sys.stdout.write(result)
 PYEOF
+)
+    printf '%s' "$resp" | python3 -c "$_py" "$field"
 }
 
 # Read a password with * masking, one character at a time.

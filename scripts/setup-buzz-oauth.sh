@@ -200,18 +200,24 @@ json_get() {
     if [ "$USE_JQ" -eq 1 ]; then
         printf '%s' "$json" | jq -r ".$path // empty" 2>/dev/null || true
     else
-        python3 - "$json" "$path" <<'PYEOF'
+        # Pipe JSON via stdin (avoids argv length limits; keeps tokens out of process
+        # listings).  The script is captured in a variable so python3 receives it via
+        # -c, leaving stdin free for the data pipe.
+        local _py
+        _py=$(cat <<'PYEOF'
 import sys, json
 try:
-    data = json.loads(sys.argv[1])
+    data = json.load(sys.stdin)
     val = data
-    for key in sys.argv[2].split('.'):
+    for key in sys.argv[1].split('.'):
         val = val.get(key) if isinstance(val, dict) else None
     if val is not None and not isinstance(val, (dict, list)):
         sys.stdout.write(str(val))
 except Exception:
     pass
 PYEOF
+)
+        printf '%s' "$json" | python3 -c "$_py" "$path"
     fi
 }
 
@@ -240,9 +246,14 @@ PYEOF
 # Supported fields: code  token  partial_token  message  userid
 buzz_get_field() {
     local resp="$1" field="$2"
-    python3 - "$resp" "$field" <<'PYEOF'
+    # Pipe the response via stdin so it does not appear in process listings and
+    # cannot hit OS argv length limits.  Script is captured in a variable so
+    # python3 receives it via -c, leaving stdin free for the data pipe.
+    local _py
+    _py=$(cat <<'PYEOF'
 import sys
-resp, field = sys.argv[1], sys.argv[2]
+field = sys.argv[1]
+resp = sys.stdin.read()
 result = ''
 try:
     import json
@@ -294,6 +305,8 @@ if not result:
 if result:
     sys.stdout.write(result)
 PYEOF
+)
+    printf '%s' "$resp" | python3 -c "$_py" "$field"
 }
 
 # ── Buzz API helpers ──────────────────────────────────────────────────────────
@@ -394,10 +407,12 @@ while [ -z "$ADMIN_TOKEN" ]; do
 
     printf 'Logging in...'
 
-    LOGIN_BODY=$(json_build \
-        "request.cmd"      "login3" \
-        "request.username" "$ADMIN_LOGIN" \
-        "request.password" "$ADMIN_PASSWORD")
+    # Pipe username and password via stdin so they do not appear in process listings.
+    LOGIN_BODY=$(printf '%s\n%s' "$ADMIN_LOGIN" "$ADMIN_PASSWORD" | python3 -c '
+import sys, json
+u, p = sys.stdin.read().splitlines()[:2]
+sys.stdout.write(json.dumps({"request": {"cmd": "login3", "username": u, "password": p}}))
+')
     ADMIN_PASSWORD=""
 
     LOGIN_RESPONSE=$(buzz_post "login3" "$LOGIN_BODY" 2>/dev/null || true)
@@ -424,10 +439,12 @@ while [ -z "$ADMIN_TOKEN" ]; do
         PARTIAL_TOKEN=$(buzz_get_field "$LOGIN_RESPONSE" partial_token)
 
         MFA_CMD="verifylogin"   # ← adjust if your server uses a different command name
-        MFA_BODY=$(json_build \
-            "request.cmd"   "$MFA_CMD" \
-            "request.token" "$PARTIAL_TOKEN" \
-            "request.code"  "$MFA_CODE")
+        # Pipe the partial token and OTP via stdin so they do not appear in process listings.
+        MFA_BODY=$(printf '%s\n%s' "$PARTIAL_TOKEN" "$MFA_CODE" | python3 -c "
+import sys, json
+t, c = sys.stdin.read().splitlines()[:2]
+sys.stdout.write(json.dumps({'request': {'cmd': '$MFA_CMD', 'token': t, 'code': c}}))
+")
         PARTIAL_TOKEN=""
 
         LOGIN_RESPONSE=$(buzz_post "$MFA_CMD" "$MFA_BODY" 2>/dev/null || true)
