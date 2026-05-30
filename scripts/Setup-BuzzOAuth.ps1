@@ -62,8 +62,9 @@
     - The setup admin token is used only during this script and is never written to disk.
     - On Linux the dotnet cert store is a directory of PFX files under ~/.dotnet/. Restrict
       that directory's permissions: chmod 700 ~/.dotnet/corefx/cryptography/x509stores/my
-    - On Windows you can make the private key non-exportable for extra hardening; see the
-      comment near "X509Certificate2::new(...PersistKeySet...)" in the script.
+    - On Windows the private key is non-exportable by default (set via -KeyExportPolicy
+      NonExportable in New-SelfSignedCertificate). To allow backup/migration add
+      -KeyExportPolicy ExportableEncrypted to the New-SelfSignedCertificate call.
 #>
 
 [CmdletBinding()]
@@ -496,71 +497,58 @@ Write-Host "  Store       : $StoreLocation/My"
 Write-Host ""
 Write-Host "Generating key..." -NoNewline
 
-# Generate RSA key.
-# Use RSACng on Windows (CNG-backed key) so that GetRSAPrivateKey() returns a non-null
-# object in both .NET Framework (PS5.1) and .NET 5+ (PS7/dotnet run).
-# RSACryptoServiceProvider (CAPI) keys return null from GetRSAPrivateKey() in .NET 5+.
-$rsa = if ($IsWindows) {
-    [System.Security.Cryptography.RSACng]::new($KeySize)
-} else {
-    $r = [System.Security.Cryptography.RSA]::Create()
-    $r.KeySize = $KeySize
-    $r
-}
-
-# Build a self-signed certificate as a container for the key.
-# CertificateRequest is available in .NET Framework 4.7.2+ (included in Windows 11).
-$certReq = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
-    $certSubject,
-    $rsa,
-    [System.Security.Cryptography.HashAlgorithmName]::SHA256,
-    [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
-)
-
-$notBefore = [DateTimeOffset]::UtcNow
-$notAfter  = $notBefore.AddYears(100)
-$cert      = $certReq.CreateSelfSigned($notBefore, $notAfter)
-
 if ($IsWindows) {
-    # Re-create from PFX with PersistKeySet so the CNG key is stored permanently
-    # and is accessible by background services.
-    # The key is non-exportable by default. Add X509KeyStorageFlags::PrivateKeyExportable
-    # to the flags below if you need to back up or migrate the private key (less secure).
-    $pfxBytes = $cert.Export(
-        [System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12, "")
-    $cert.Dispose()
-    $keySetFlag = if ($StoreLocation -eq 'LocalMachine') {
-        [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::MachineKeySet
-    } else {
-        [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::UserKeySet
-    }
-    $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
-        $pfxBytes, "",
-        [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::PersistKeySet -bor
-        $keySetFlag
-    )
-}
+    # Use New-SelfSignedCertificate which stores the private key directly as CNG (KSP)
+    # in the certificate store, with no PFX round-trip. In .NET Framework (PS5.1),
+    # X509Certificate2 PFX import silently converts any CNG key to CAPI, and
+    # GetRSAPrivateKey() returns null for CAPI-backed certs in .NET 5+ (dotnet run / PS7).
+    $certObj = New-SelfSignedCertificate `
+        -Subject $certSubject `
+        -KeyAlgorithm RSA `
+        -KeyLength $KeySize `
+        -KeyExportPolicy NonExportable `
+        -NotAfter ([datetime]::UtcNow.AddYears(100)) `
+        -CertStoreLocation "Cert:\$StoreLocation\My" `
+        -Provider "Microsoft Software Key Storage Provider" `
+        -HashAlgorithm SHA256
+    $thumbprint  = $certObj.Thumbprint
+    $rsaTmp      = $certObj.GetRSAPrivateKey()
+    $publicKeyPem = Export-SpkiPem $rsaTmp
+    $rsaTmp.Dispose()
+    $certObj.Dispose()
+} else {
+    $rsa = [System.Security.Cryptography.RSA]::Create()
+    $rsa.KeySize = $KeySize
 
-# Import into the OS certificate store
-$store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
-    [System.Security.Cryptography.X509Certificates.StoreName]::My,
-    [System.Security.Cryptography.X509Certificates.StoreLocation]::$StoreLocation
-)
-$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-try {
-    $store.Add($cert)
-} finally {
-    $store.Close()
+    $certReq = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+        $certSubject,
+        $rsa,
+        [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+        [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
+    )
+    $notBefore = [DateTimeOffset]::UtcNow
+    $notAfter  = $notBefore.AddYears(100)
+    $cert      = $certReq.CreateSelfSigned($notBefore, $notAfter)
+
+    $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+        [System.Security.Cryptography.X509Certificates.StoreName]::My,
+        [System.Security.Cryptography.X509Certificates.StoreLocation]::$StoreLocation
+    )
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+    try {
+        $store.Add($cert)
+    } finally {
+        $store.Close()
+    }
+    $thumbprint = $cert.Thumbprint
+    $cert.Dispose()
+
+    $publicKeyPem = Export-SpkiPem $rsa
+    $rsa.Dispose()
 }
-$thumbprint = $cert.Thumbprint
-$cert.Dispose()
 
 Write-Host " done" -ForegroundColor Green
 Write-Host "  Thumbprint: $thumbprint" -ForegroundColor Green
-
-# Export public key PEM from the RSA key object (compatible with PS5.1 / .NET Framework)
-$publicKeyPem = Export-SpkiPem $rsa
-$rsa.Dispose()
 
 if ($IsLinux) {
     $storeDir = Join-Path $env:HOME ".dotnet/corefx/cryptography/x509stores/my"
