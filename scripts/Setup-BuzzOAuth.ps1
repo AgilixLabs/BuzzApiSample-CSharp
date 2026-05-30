@@ -511,10 +511,10 @@ if ($IsWindows) {
         -CertStoreLocation "Cert:\$StoreLocation\My" `
         -Provider "Microsoft Software Key Storage Provider" `
         -HashAlgorithm SHA256
-    $thumbprint  = $certObj.Thumbprint
-    $rsaTmp      = $certObj.GetRSAPrivateKey()
-    $publicKeyPem = Export-SpkiPem $rsaTmp
-    $rsaTmp.Dispose()
+    $thumbprint   = $certObj.Thumbprint
+    # PublicKey.Key is a plain property (works in PS5.1); GetRSAPrivateKey() is an
+    # extension method and cannot be called as an instance method in PS5.1.
+    $publicKeyPem = Export-SpkiPem $certObj.PublicKey.Key
     $certObj.Dispose()
 } else {
     $rsa = [System.Security.Cryptography.RSA]::Create()
