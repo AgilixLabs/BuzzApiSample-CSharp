@@ -473,18 +473,20 @@ namespace BuzzAPISample
         {
             _logger?.LogInformation("Requesting OAuth access token");
 
-            string assertion = BuildClientAssertion(_oauthRsa!, _oauthUserId, _oauthKid, _oauthTokenEndpoint);
-            var formFields = new[]
-            {
-                new KeyValuePair<string, string>("grant_type",            "client_credentials"),
-                new KeyValuePair<string, string>("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
-                new KeyValuePair<string, string>("client_assertion",      assertion),
-            };
-
             int retriesRemaining = _retriesToMake;
             TimeSpan baseWaitDuration = _initialWaitDuration;
             while (true)
             {
+                // Build a fresh assertion on every attempt: JWTs expire in 2 minutes and a
+                // long Retry-After backoff can push a reused assertion past its exp claim.
+                string assertion = BuildClientAssertion(_oauthRsa!, _oauthUserId, _oauthKid, _oauthTokenEndpoint);
+                var formFields = new[]
+                {
+                    new KeyValuePair<string, string>("grant_type",            "client_credentials"),
+                    new KeyValuePair<string, string>("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
+                    new KeyValuePair<string, string>("client_assertion",      assertion),
+                };
+
                 RetryConditionHeaderValue? retryHeader = null;
                 HttpResponseMessage? response = null;
                 try

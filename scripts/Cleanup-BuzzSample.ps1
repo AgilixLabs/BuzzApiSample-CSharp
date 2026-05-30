@@ -265,7 +265,7 @@ if ($CertThumbprint) {
         $StoreLocation)
     try {
         $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-        $thumbprint = $CertThumbprint -replace '\s', ''
+        $thumbprint = $CertThumbprint -replace '[^0-9A-Fa-f]', ''
         $certs = $store.Certificates.Find(
             [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
             $thumbprint, $false)

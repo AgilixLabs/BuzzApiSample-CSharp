@@ -339,10 +339,16 @@ printf '\n── Deleting OAuth key (kid: %s) ───────────�
 
 if [ -n "$OAUTH_KID" ]; then
     key_url="${SERVER_URL}/api/users/${OAUTH_USER_ID}/keys/${OAUTH_KID}"
+    # Write the Bearer header to a temp file so the token does not appear in
+    # the process list (visible via ps on multi-user systems).
+    _key_hdr=$(mktemp 2>/dev/null)
+    chmod 600 "$_key_hdr"
+    printf 'Authorization: Bearer %s\n' "$ADMIN_TOKEN" > "$_key_hdr"
     key_response="$(curl -s -w '\n%{http_code}' \
         -X DELETE "$key_url" \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        -H "@${_key_hdr}" \
         "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}")"
+    rm -f "$_key_hdr"
 
     key_http_code="$(printf '%s' "$key_response" | tail -n1)"
     key_body="$(printf '%s' "$key_response" | sed '$d')"

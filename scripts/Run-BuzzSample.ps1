@@ -74,7 +74,7 @@ function Test-SetupComplete {
             $storeLocation)
         try {
             $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
-            $thumbprint = ([string]$thumbprintVal) -replace '\s', ''
+            $thumbprint = ([string]$thumbprintVal) -replace '[^0-9A-Fa-f]', ''
             $certs = $store.Certificates.Find(
                 [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
                 $thumbprint, $false)

@@ -340,13 +340,18 @@ buzz_post() {
 # REST /api/* endpoints use Authorization: Bearer for OAuth tokens.
 buzz_put() {
     local url="$1" content_type="$2" file_path="$3" token="$4"
-    local result http_code curl_exit
+    local result http_code curl_exit _hdr_file
+    # Write the Bearer header to a file in the already-managed temp dir so the
+    # token does not appear in the process list (visible via ps on multi-user systems).
+    _hdr_file="${TMPDIR_SETUP}/bearer_header"
+    printf 'Authorization: Bearer %s\n' "$token" > "$_hdr_file"
     curl_exit=0
     result=$(curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -w '\n%{http_code}' \
         -X PUT "$url" \
-        -H "Authorization: Bearer $token" \
+        -H "@${_hdr_file}" \
         -H "Content-Type: $content_type" \
         --data-binary "@${file_path}") || curl_exit=$?
+    rm -f "$_hdr_file"
     if [ "$curl_exit" -ne 0 ]; then
         printf '\n' >&2
         die "curl failed for $url (exit $curl_exit). Check the server URL, connectivity, and any CURL_OPTS."

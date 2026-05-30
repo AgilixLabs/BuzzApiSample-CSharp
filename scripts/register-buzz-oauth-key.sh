@@ -116,6 +116,12 @@ if ! command -v curl &>/dev/null; then
     die "curl is required but not found.  Install with: apt-get install curl"
 fi
 
+# Temp dir for the Authorization header file; cleaned up on exit.
+_HDR_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t buzz-oauth)
+[ -d "$_HDR_DIR" ] || die "Failed to create temporary directory."
+chmod 700 "$_HDR_DIR"
+trap 'rm -rf "$_HDR_DIR"' EXIT
+
 # ── Register the key ──────────────────────────────────────────────────────────
 URL="${SERVER_URL}/api/users/${USER_ID}/keys/${KID}"
 
@@ -125,14 +131,20 @@ printf '  Kid  : %s\n' "$KID"
 printf '  File : %s\n' "$(cd -P "$(dirname -- "$PUBLIC_KEY_PATH")" && printf '%s/%s' "$PWD" "$(basename -- "$PUBLIC_KEY_PATH")")"
 printf '\n'
 
+# Write the Bearer header to a temp file so the token does not appear in the
+# process list (visible via ps on multi-user systems).
+_hdr_file="${_HDR_DIR}/bearer_header"
+printf 'Authorization: Bearer %s\n' "$ADMIN_TOKEN" > "$_hdr_file"
+
 # Capture HTTP status code alongside response body
 curl_exit=0
 http_response=$(curl -sL -w '\n%{http_code}' \
     -X PUT "$URL" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "@${_hdr_file}" \
     -H "Content-Type: application/x-pem-file" \
     --data-binary "@${PUBLIC_KEY_PATH}" \
     "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}") || curl_exit=$?
+rm -f "$_hdr_file"
 if [ "$curl_exit" -ne 0 ]; then
     die "curl failed for $URL (exit $curl_exit). Check the server URL, connectivity, and any CURL_OPTS."
 fi
