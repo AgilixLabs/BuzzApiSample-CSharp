@@ -95,10 +95,9 @@ except Exception:
 # Supported fields: code  token  partial_token  message
 buzz_get_field() {
     local resp="$1" field="$2"
-    printf '%s' "$resp" | python3 - "$field" <<'PYEOF'
+    python3 - "$resp" "$field" <<'PYEOF'
 import sys
-field = sys.argv[1]
-resp = sys.stdin.read()
+resp, field = sys.argv[1], sys.argv[2]
 result = ''
 try:
     import json
