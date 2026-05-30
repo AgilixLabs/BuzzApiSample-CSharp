@@ -52,7 +52,7 @@ chmod +x scripts/run-buzz-sample.sh
 ./scripts/run-buzz-sample.sh
 ```
 
-**Windows** (Windows PowerShell 5.1):
+**Windows** (PowerShell 5.1 or 7+):
 ```powershell
 .\scripts\Run-BuzzSample.ps1
 ```
@@ -105,7 +105,7 @@ certificate lands in the right home directory:
 sudo -u buzzservice ./scripts/setup-buzz-oauth.sh
 ```
 
-**Windows** (PowerShell 5.1):
+**Windows** (Windows PowerShell 5.1; or invoke via `Run-BuzzSample.ps1` from PowerShell 7+):
 ```powershell
 .\scripts\Setup-BuzzOAuth.ps1
 # For Windows services (run as Administrator):
