@@ -344,7 +344,7 @@ if [ -n "$OAUTH_KID" ]; then
     _key_hdr=$(mktemp 2>/dev/null)
     chmod 600 "$_key_hdr"
     printf 'Authorization: Bearer %s\n' "$ADMIN_TOKEN" > "$_key_hdr"
-    key_response="$(curl -s -w '\n%{http_code}' \
+    key_response="$(curl -sL -w '\n%{http_code}' \
         -X DELETE "$key_url" \
         -H "@${_key_hdr}" \
         "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}")"
@@ -388,7 +388,7 @@ print(json.dumps(body), end='')
 " "$OAUTH_USER_ID")"
 
 _token_enc="$(printf '%s' "$ADMIN_TOKEN" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(),safe=""),end="")')"
-delete_response="$(printf '%s' "$delete_body" | curl -s -X POST \
+delete_response="$(printf '%s' "$delete_body" | curl -sL -X POST \
     "${SERVER_URL}/cmd/deleteusers?_token=${_token_enc}" \
     -H "Content-Type: application/json" \
     --data-binary @- \

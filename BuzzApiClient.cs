@@ -511,7 +511,7 @@ namespace BuzzAPISample
                     {
                         string body = await response.Content.ReadAsStringAsync(cancel);
                         _logger?.LogError("OAuth token request failed: {StatusCode} {Body}", response.StatusCode, body);
-                        throw new Exception($"OAuth token request failed ({response.StatusCode}): {body}");
+                        throw new HttpRequestException($"OAuth token request failed ({response.StatusCode}): {body}", null, response.StatusCode);
                     }
 
                     JsonNode? tokenJson = await JsonNode.ParseAsync(await response.Content.ReadAsStreamAsync(cancel), cancellationToken: cancel);

@@ -154,11 +154,18 @@ function Export-SpkiPem([System.Security.Cryptography.RSA] $rsaKey) {
 }
 
 function Get-BuzzCode([psobject] $response) {
-    # Buzz responses nest the code under .response.code or directly under .code
-    if ($null -ne $response.response -and $null -ne $response.response.code) {
-        return $response.response.code
+    # Buzz responses nest the code under .response.code or directly under .code.
+    # Use PSObject.Properties to avoid StrictMode errors on missing members.
+    if ($null -ne $response -and $response.PSObject.Properties['response']) {
+        $inner = $response.response
+        if ($null -ne $inner -and $inner.PSObject.Properties['code']) {
+            return $inner.code
+        }
     }
-    return $response.code
+    if ($null -ne $response -and $response.PSObject.Properties['code']) {
+        return $response.code
+    }
+    return $null
 }
 
 # ── Step 1: Server URL ────────────────────────────────────────────────────────
