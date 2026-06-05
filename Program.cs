@@ -1,4 +1,6 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json.Nodes;
 
 namespace BuzzAPISample
@@ -7,108 +9,131 @@ namespace BuzzAPISample
     {
         static async Task Main()
         {
-            /* BEFORE RUNNING
-             * 1. Set contactInformation to your name, company name, company URL, email address, or other contact information.
-             *    Combinations of those are okay, and are usually separated with ';'
-             *    For example, I could use:
-             *      string contactInformation = "+https://agilix.com/; paul.smith@agilix.com";
-             * 2. Set applicationInformation to the name of your application.
-             *    If you're running the sample, you could use "BuzzAPISample"
-             *      string applicationInformation = "BuzzAPISample";
-             * 3. Configure buzzServerUrl, userspace, username, and password for your Buzz environment.
-             *    buzzServerUrl is typically "https://background.api.agilixbuzz.com"  (see https://api.agilixbuzz.com/docs/#!/Concept/ApiTimeLimiting)
-             *    userspace is the userspace of the domain where the login user resides
-             *    username and password are the username and password of the login user
-             */
+            /* CONFIGURATION
+             *
+             * Quickest path: run ./scripts/run-buzz-sample.sh (Linux/macOS) or
+             * .\scripts\Run-BuzzSample.ps1 (Windows) — it checks whether setup has been done and runs it if not,
+             * then launches this program.
+             *
+             * Manual path: create buzz-config.json yourself (see README.md) or run the
+             * setup script directly.  buzz-config.json is always preferred over any
+             * hardcoded values. */
 
-            string contactInformation = ;
-            string applicationInformation = ;
+            if (!File.Exists("buzz-config.json"))
+                throw new FileNotFoundException(
+                    "buzz-config.json not found.\n" +
+                    "  Linux/macOS: ./scripts/run-buzz-sample.sh\n" +
+                    "  Windows    : .\\scripts\\Run-BuzzSample.ps1\n" +
+                    "  Manual     : see README.md");
+
+            JsonObject fileCfg = JsonNode.Parse(File.ReadAllText("buzz-config.json")) as JsonObject
+                ?? throw new InvalidOperationException("buzz-config.json is empty or does not contain a JSON object.");
+
+            string serverUrl              = fileCfg["serverUrl"]?.ToString()              ?? throw new InvalidOperationException("'serverUrl' missing from buzz-config.json");
+            string contactInformation     = fileCfg["contactInformation"]?.ToString()     ?? string.Empty;
+            string applicationInformation = fileCfg["applicationInformation"]?.ToString() ?? string.Empty;
+            string oauthUserId            = fileCfg["oauthUserId"]?.ToString()            ?? throw new InvalidOperationException("'oauthUserId' missing from buzz-config.json");
+            string oauthKid               = fileCfg["oauthKid"]?.ToString()               ?? throw new InvalidOperationException("'oauthKid' missing from buzz-config.json");
+            string? certThumbprint        = fileCfg["certThumbprint"]?.ToString()?.Trim();
+            string? certStoreLocationStr  = fileCfg["certStoreLocation"]?.ToString();
+            string? privateKeyPath        = fileCfg["privateKeyPath"]?.ToString()?.Trim();
+
+            if (string.IsNullOrWhiteSpace(certThumbprint) && string.IsNullOrWhiteSpace(privateKeyPath))
+                throw new InvalidOperationException(
+                    "No private key source in buzz-config.json. " +
+                    "Run the setup script or see README.md.");
+
             string userAgent = $"BuzzApiClient/1.0.0 (CSharp; {applicationInformation}; {contactInformation})";
 
-            // Update these for your environment. Contact Agilix support if you need help.
-            string buzzServerUrl = "https://backoff-test.api.agilixbuzz.com";   // (see https://api.agilixbuzz.com/docs/#!/Concept/ApiTimeLimiting)
-            string userspace = ;
-            string username = ;
-            string password = ;
-
-            // Create a console logger (change this and change assembly dependencies to send logs somewhere else)
             using ILoggerFactory loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
             ILogger<BuzzApiClient> logger = loggerFactory.CreateLogger<BuzzApiClient>();
 
-            // Create the BuzzApiClient
-            BuzzApiClient client = new(logger, buzzServerUrl, userAgent, verbose: true);
+            X509Certificate2? oauthCert = null;
+            RSA? rsa = null;
+            try
+            {
+                if (!string.IsNullOrEmpty(certThumbprint))
+                {
+                    StoreLocation storeLocation = string.Equals(certStoreLocationStr, "LocalMachine",
+                        StringComparison.OrdinalIgnoreCase)
+                        ? StoreLocation.LocalMachine
+                        : StoreLocation.CurrentUser;
 
-            // Get the signed on user (login automatically)
-            JsonNode getUserResponse = client.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2"));
-            string? domainId = getUserResponse["user"]?["domainid"]?.ToString();
-            logger.LogInformation($"loginDomainId: {domainId}");
+                    oauthCert = BuzzApiClient.LoadCertificateFromStore(certThumbprint, storeLocation);
+                    rsa = oauthCert.GetRSAPrivateKey()
+                        ?? throw new InvalidOperationException(
+                            $"Certificate '{certThumbprint}' has no RSA private key.");
+                }
+                else
+                {
+                    rsa = RSA.Create();
+                    rsa.ImportFromPem(File.ReadAllText(privateKeyPath!));
+                }
 
-            // Create a user
-            JsonNode createUserResponse = client.VerifyResponse(
-                await client.JsonRequest(HttpMethod.Post, "createusers",
-                    json: new JsonObject
-                    {
-                        ["requests"] = new JsonObject
-                        {
-                            ["user"] = new JsonArray
-                            {
-                                new JsonObject
-                                {
-                                    ["username"] = "testuser",
-                                    ["password"] = "password",
-                                    ["firstname"] = "Test",
-                                    ["lastname"] = "User",
-                                    ["domainid"] = domainId
-                                }
-                            }
-                        }
-                    }));
+                using BuzzApiClient client = new(serverUrl, userAgent, oauthUserId, oauthKid, rsa, verbose: false, logger: logger);
 
-            // Get the new user's ID
-            string? newUserId = createUserResponse["responses"]?["response"]?[0]?["user"]?["userid"]?.ToString();
-            _ = newUserId ?? throw new Exception($"Unable to get the new user's ID at responses.response[0].user.userid from: {createUserResponse}");
-            logger.LogInformation($"newUserId: {newUserId}");
+                await RunSample(client, logger);
+            }
+            finally
+            {
+                rsa?.Dispose();
+                oauthCert?.Dispose();
+            }
+        }
 
-            // Call GetUser2 with the user ID
-            client.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2", $"userid={newUserId}"));
+        static async Task RunSample(BuzzApiClient client, ILogger<BuzzApiClient> logger)
+        {
+            Console.WriteLine();
+            Console.WriteLine("════════════════════════════════════════════════════════");
+            Console.WriteLine("  Buzz API OAuth 2.0 Sample — Read-Only Demo");
+            Console.WriteLine("════════════════════════════════════════════════════════");
+            Console.WriteLine();
 
-            // Update the user to have an email address
-            client.VerifyResponse(
-                await client.JsonRequest(HttpMethod.Post, "updateusers", json:
-                    new JsonObject
-                    {
-                        ["requests"] = new JsonObject
-                        {
-                            ["user"] = new JsonArray
-                            {
-                                new JsonObject
-                                {
-                                    ["userid"] = newUserId,
-                                    ["email"] = "myemail@school.edu"
-                                }
-                            }
-                        }
-                    }));
+            // ── GetUser2 ─────────────────────────────────────────────────────
+            // Verify authentication is working and discover the domain this
+            // Application Identity account belongs to.
+            Console.WriteLine("── GetUser2 (verify authentication) ────────────────────");
 
-            // Call GetUser2 to see the user with the email address
-            client.VerifyResponse(await client.JsonRequest(HttpMethod.Get, "getuser2", $"userid={newUserId}"));
+            JsonNode userNode = client.VerifyResponse(
+                await client.JsonRequest(HttpMethod.Get, "getuser2"));
 
-            // Delete the user
-            client.VerifyResponse(
-                await client.JsonRequest(HttpMethod.Post, "deleteusers", json:
-                    new JsonObject
-                    {
-                        ["requests"] = new JsonObject
-                        {
-                            ["user"] = new JsonArray
-                            {
-                                new JsonObject
-                                {
-                                    ["userid"] = newUserId
-                                }
-                            }
-                        }
-                    }));
+            string? userId    = userNode["user"]?["userid"]?.ToString();
+            string? username  = userNode["user"]?["username"]?.ToString();
+            string? firstName = userNode["user"]?["firstname"]?.ToString();
+            string? lastName  = userNode["user"]?["lastname"]?.ToString();
+            string? domainId  = userNode["user"]?["domainid"]?.ToString();
+
+            logger.LogInformation("Authenticated as user {Username} (\"{FirstName} {LastName}\", userid: {UserId})",
+                username, firstName, lastName, userId);
+            logger.LogInformation("Home domain: {DomainId}", domainId);
+
+            // ── GetDomain2 ───────────────────────────────────────────────────
+            // Fetch details about the domain the Application Identity account
+            // belongs to, demonstrating a typical read API call.
+            if (!string.IsNullOrEmpty(domainId))
+            {
+                Console.WriteLine();
+                Console.WriteLine("── GetDomain2 (read domain details) ────────────────────");
+
+                JsonNode domainNode = client.VerifyResponse(
+                    await client.JsonRequest(HttpMethod.Get, "getdomain2", $"domainid={Uri.EscapeDataString(domainId)}"));
+
+                string? domainName      = domainNode["domain"]?["name"]?.ToString();
+                string? domainUserspace = domainNode["domain"]?["userspace"]?.ToString();
+                string? domainType      = domainNode["domain"]?["type"]?.ToString();
+
+                logger.LogInformation("Domain name: {Name}", domainName);
+                logger.LogInformation("Userspace  : {Userspace}", domainUserspace);
+                if (!string.IsNullOrEmpty(domainType))
+                    logger.LogInformation("Type       : {Type}", domainType);
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("════════════════════════════════════════════════════════");
+            Console.WriteLine("  All API calls succeeded.  OAuth integration is working.");
+            Console.WriteLine("  No data was created or modified.");
+            Console.WriteLine("════════════════════════════════════════════════════════");
+            Console.WriteLine();
         }
     }
 }
