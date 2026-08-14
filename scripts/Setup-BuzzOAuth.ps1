@@ -7,9 +7,13 @@
     or integration to the Buzz API using OAuth 2.0 JWT client credentials.
 
     What this script does (Steps 1–8):
-      1. Prompts for the Buzz server URL.
-      2. Logs in as a Buzz administrator (supports MFA).  Credentials are verified
-         early so mistakes are caught before any other information is entered.
+      1. Prompts for the Buzz server URL (defaults to https://backgroundapi.agilixbuzz.com,
+         the host intended for server-to-server integrations).
+      2. Logs in as a Buzz administrator.  Accounts with multi-factor authentication are
+         supported: login3 answers SecondFactorRequired, and the script then prompts for
+         the one-time code and completes the login with secondfactorauthenticate.
+         Credentials are verified early so mistakes are caught before anything else
+         is entered.
       3. Prompts for certificate store location (CurrentUser or LocalMachine).
       4. Prompts for contact info and application name.
       5. Creates (or reuses) an Application Identity user account in Buzz.
@@ -22,11 +26,13 @@
       8. Writes buzz-config.json in the project root with all values filled in,
          so `dotnet run` works immediately.
 
-    Requires: Windows PowerShell 5.1.
-    On Windows 11 the required .NET Framework 4.8 is already installed.
+    Requires: Windows PowerShell 5.1 — the version that ships with Windows 11, along
+    with the .NET Framework 4.8 it needs.  Nothing else has to be installed; in
+    particular OpenSSL is not required (see BuzzPem.ps1).
 
 .PARAMETER ServerUrl
-    Buzz API server URL (e.g. https://api.agilixbuzz.com).  Prompted interactively if omitted.
+    Buzz API server URL.  If omitted, you are prompted, with
+    https://backgroundapi.agilixbuzz.com offered as the default.
 
 .PARAMETER ConfigOutput
     Path to write buzz-config.json.  Defaults to buzz-config.json in the project root
@@ -52,7 +58,7 @@
 
 .EXAMPLE
     # Pre-supply the server URL
-    .\scripts\Setup-BuzzOAuth.ps1 -ServerUrl https://api.agilixbuzz.com
+    .\scripts\Setup-BuzzOAuth.ps1 -ServerUrl https://backgroundapi.agilixbuzz.com
 
 .NOTES
     SECURITY
@@ -106,52 +112,10 @@ Write-Host "This script performs a one-time setup so your application can"
 Write-Host "authenticate to the Buzz API without a username or password."
 Write-Host ""
 
-# ── Helper: export RSA public key as SubjectPublicKeyInfo PEM ─────────────────
-# Compatible with PS5.1 / .NET Framework 4.x — no .NET 5+ APIs needed.
-function Export-SpkiPem([System.Security.Cryptography.RSA] $rsaKey) {
-    $p = $rsaKey.ExportParameters($false)
-
-    function Encode-DerLength([int] $len) {
-        if ($len -lt 0x80) { return [byte[]] @($len) }
-        if ($len -lt 0x100) { return [byte[]] @(0x81, $len) }
-        return [byte[]] @(0x82, [byte]($len -shr 8), [byte]($len -band 0xFF))
-    }
-    function Encode-TLV([byte] $tag, [byte[]] $value) {
-        return [byte[]] @($tag) + (Encode-DerLength $value.Length) + $value
-    }
-    function Encode-DerInt([byte[]] $bytes) {
-        # Strip leading zero bytes (keep at least one)
-        $i = 0
-        while ($i -lt ($bytes.Length - 1) -and $bytes[$i] -eq 0x00) { $i++ }
-        $bytes = $bytes[$i..($bytes.Length - 1)]
-        # Prepend 0x00 if the high bit is set (signals a positive integer in DER)
-        if ($bytes[0] -band 0x80) { $bytes = [byte[]] @(0x00) + $bytes }
-        return Encode-TLV 0x02 $bytes
-    }
-
-    # RSA public key inner SEQUENCE: { INTEGER modulus, INTEGER exponent }
-    $rsaKeyBody = Encode-TLV 0x30 ((Encode-DerInt $p.Modulus) + (Encode-DerInt $p.Exponent))
-
-    # BIT STRING: leading 0x00 (zero unused bits) + the RSA key body
-    $bitString = Encode-TLV 0x03 ([byte[]] @(0x00) + $rsaKeyBody)
-
-    # AlgorithmIdentifier: SEQUENCE { OID rsaEncryption (1.2.840.113549.1.1.1), NULL }
-    # Pre-encoded: 30 0D 06 09 2A 86 48 86 F7 0D 01 01 01 05 00
-    $algId = [byte[]] @(0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86,
-                        0xF7, 0x0D, 0x01, 0x01, 0x01, 0x05, 0x00)
-
-    # SubjectPublicKeyInfo outer SEQUENCE: { algId, bitString }
-    $spki = Encode-TLV 0x30 ($algId + $bitString)
-
-    $b64 = [Convert]::ToBase64String($spki)
-    $sb  = [System.Text.StringBuilder]::new()
-    $sb.AppendLine("-----BEGIN PUBLIC KEY-----") | Out-Null
-    for ($i = 0; $i -lt $b64.Length; $i += 64) {
-        $sb.AppendLine($b64.Substring($i, [Math]::Min(64, $b64.Length - $i))) | Out-Null
-    }
-    $sb.Append("-----END PUBLIC KEY-----") | Out-Null
-    return $sb.ToString()
-}
+# ── RSA key generation and PEM export ─────────────────────────────────────────
+# BuzzPem.ps1 writes the ASN.1 DER by hand so this works on Windows PowerShell 5.1
+# (.NET Framework 4.x), which has none of the PEM APIs added in .NET 5.  No OpenSSL.
+. (Join-Path $PSScriptRoot "BuzzPem.ps1")
 
 function Get-BuzzCode([psobject] $response) {
     # Buzz responses nest the code under .response.code or directly under .code.
@@ -168,10 +132,137 @@ function Get-BuzzCode([psobject] $response) {
     return $null
 }
 
+function Get-BuzzProp([psobject] $obj, [string] $name) {
+    if ($null -eq $obj) { return $null }
+    $p = $obj.PSObject.Properties[$name]
+    if ($null -ne $p) { return $p.Value }
+    return $null
+}
+
+# A successful login3 / secondfactorauthenticate returns the session token at
+# response.user.token.
+function Get-BuzzLoginToken([psobject] $response) {
+    $inner = Get-BuzzProp $response 'response'
+    if ($null -eq $inner) { $inner = $response }
+    return Get-BuzzProp (Get-BuzzProp $inner 'user') 'token'
+}
+
+# Recursively find a 'token' property.  Skips remembermfa, whose token is a
+# remember-this-device credential and cannot complete a second-factor login.
+function Find-BuzzToken([object] $node, [int] $depth = 0) {
+    if ($null -eq $node -or $depth -gt 6) { return $null }
+    if ($node -is [string] -or $node -is [ValueType]) { return $null }
+
+    if ($node -is [System.Collections.IEnumerable]) {
+        foreach ($item in $node) {
+            $found = Find-BuzzToken $item ($depth + 1)
+            if ($found) { return $found }
+        }
+        return $null
+    }
+
+    # Prefer a token on this level before descending.
+    foreach ($p in $node.PSObject.Properties) {
+        if ($p.Name -eq 'remembermfa') { continue }
+        if ($p.Name -eq 'token' -and $p.Value -is [string] -and $p.Value) { return $p.Value }
+    }
+    foreach ($p in $node.PSObject.Properties) {
+        if ($p.Name -eq 'remembermfa') { continue }
+        $found = Find-BuzzToken $p.Value ($depth + 1)
+        if ($found) { return $found }
+    }
+    return $null
+}
+
+# The short-lived token login3 returns alongside SecondFactorRequired.
+#
+# Observed shape of a real SecondFactorRequired response (the API reference
+# documents only the *successful* login shape, which is different):
+#
+#   response.code            "SecondFactorRequired"
+#   response.message
+#   response.errorId
+#   response.token           <- the short-lived second-factor token
+#   response.body.token      <- the same value, duplicated
+#   response.body.mfa.type   <- which second factor the account uses
+#
+# Note there is no "user" node at all here, so response.user.token — where the
+# session token lives on a *successful* login — does not exist yet.  The probe
+# order below still checks it first, harmlessly, before falling back to
+# response.token, so both shapes work.
+function Get-BuzzSecondFactorToken([psobject] $response) {
+    $inner = Get-BuzzProp $response 'response'
+    if ($null -eq $inner) { $inner = $response }
+
+    $candidate = Get-BuzzProp (Get-BuzzProp $inner 'user') 'token'
+    if (-not [string]::IsNullOrEmpty($candidate)) { return $candidate }
+
+    foreach ($name in 'token', 'mfatoken', 'secondfactortoken', 'logintoken') {
+        $candidate = Get-BuzzProp $inner $name
+        if ($candidate -is [string] -and -not [string]::IsNullOrEmpty($candidate)) { return $candidate }
+    }
+
+    # response.body.token carries the same value on the observed shape.
+    $candidate = Get-BuzzProp (Get-BuzzProp $inner 'body') 'token'
+    if ($candidate -is [string] -and -not [string]::IsNullOrEmpty($candidate)) { return $candidate }
+
+    return (Find-BuzzToken $inner)
+}
+
+# Describe a response's structure — property names and value kinds only, never
+# values, since this is printed to the console to diagnose a failed login.
+function Get-BuzzShape([object] $node, [string] $prefix = '', [int] $depth = 0) {
+    $lines = @()
+    if ($null -eq $node -or $depth -gt 6) { return $lines }
+
+    if ($node -is [string] -or $node -is [ValueType]) {
+        $lines += "  $($prefix.TrimEnd('.')) : $($node.GetType().Name)"
+        return $lines
+    }
+    if ($node -is [System.Collections.IEnumerable]) {
+        $i = 0
+        foreach ($item in $node) {
+            $lines += Get-BuzzShape $item "$($prefix.TrimEnd('.'))[$i]." ($depth + 1)
+            $i++
+        }
+        return $lines
+    }
+    foreach ($p in $node.PSObject.Properties) {
+        if ($null -ne $p.Value -and -not ($p.Value -is [string]) -and -not ($p.Value -is [ValueType])) {
+            $lines += Get-BuzzShape $p.Value "$prefix$($p.Name)." ($depth + 1)
+        } else {
+            $kind = if ($null -eq $p.Value) { 'null' } else { $p.Value.GetType().Name }
+            $lines += "  $prefix$($p.Name) : $kind"
+        }
+    }
+    return $lines
+}
+
+# Plain-language guidance for the login3 failure codes the API documents.
+function Get-BuzzLoginHint([string] $code) {
+    switch ($code) {
+        'InvalidCredentials'   { return "The username or password is not correct." }
+        'AccountLockout'       { return "The account is locked out after too many failed password attempts. An administrator must unlock it." }
+        'PasswordExpired'      { return "The password has expired and must be changed in Buzz before this account can be used here." }
+        'DeactivatedUserOrDomain' { return "The account or its domain has been deactivated." }
+        'LoginMethodNotAllowed'   { return "This account does not allow password login (SSO-only accounts, for example). Use a different admin account." }
+        'PasswordPolicyRequirementsNotMet' { return "The password no longer meets the domain password policy and must be reset in Buzz first." }
+        'LicenseLimitExceeded' { return "The domain's license limit is exceeded for one of this account's personas." }
+        'LicenseExpired'       { return "The domain's license has expired." }
+        'LicenseNotYetValid'   { return "The domain's license is not valid yet." }
+        'NoLicense'            { return "The domain has no license." }
+        default                { return $null }
+    }
+}
+
 # ── Step 1: Server URL ────────────────────────────────────────────────────────
+# backgroundapi is the host intended for server-to-server integrations like this one.
+$defaultServerUrl = "https://backgroundapi.agilixbuzz.com"
+
 Write-Host "─── Step 1: Buzz Server URL ───────────────────────────────" -ForegroundColor Yellow
 if ([string]::IsNullOrEmpty($ServerUrl)) {
-    $ServerUrl = (Read-Host "Buzz API server URL (e.g. https://api.agilixbuzz.com)").Trim()
+    $ServerUrl = (Read-Host "Buzz API server URL [default: $defaultServerUrl]").Trim()
+    if ([string]::IsNullOrEmpty($ServerUrl)) { $ServerUrl = $defaultServerUrl }
 }
 if ([string]::IsNullOrEmpty($ServerUrl)) {
     throw "Server URL is required."
@@ -219,6 +310,7 @@ while ($null -eq $adminToken) {
             -Uri             "$ServerUrl/cmd/login3" `
             -Method          Post `
             -ContentType     "application/json" `
+            -Headers         @{ Accept = "application/json" } `
             -Body            $loginBody
     } catch {
         $loginBody = $null
@@ -232,33 +324,69 @@ while ($null -eq $adminToken) {
 
     $loginCode = Get-BuzzCode $loginResult
 
-    # ── MFA handling ──────────────────────────────────────────────────────────
-    if ($loginCode -match "(?i)(factor|challenge|otp|mfa|verify|multifactor)") {
-        Write-Host " MFA required." -ForegroundColor Yellow
-        $mfaCode = (Read-Host "Enter your MFA / one-time code").Trim()
+    # ── Multi-factor authentication ───────────────────────────────────────────
+    # login3 returns SecondFactorRequired when the password was correct but the
+    # account has MFA configured.  The token it returns alongside that code is a
+    # short-lived token good only for secondfactorauthenticate, which returns the
+    # real session token.  See:
+    #   https://api.agilixbuzz.com/docs/entry/Command/Login3.md
+    #   https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
+    if ($loginCode -eq "SecondFactorConfigurationNowRequired") {
+        Write-Host ""
+        Write-Host "  This account must configure multi-factor authentication before it can" -ForegroundColor Red
+        Write-Host "  be used.  Sign in to Buzz with this account, complete the MFA setup," -ForegroundColor Yellow
+        Write-Host "  then re-run this script.  Press Ctrl+C to abort." -ForegroundColor Yellow
+        Write-Host ""
+        continue
+    }
 
-        $partialToken = if ($null -ne $loginResult.response) { $loginResult.response.token } else { $loginResult.token }
+    if ($loginCode -eq "SecondFactorRequired") {
+        Write-Host " multi-factor authentication required." -ForegroundColor Yellow
 
-        $mfaCmd  = "verifylogin"
+        # Short-lived token that authorises only the secondfactorauthenticate call.
+        $partialToken = Get-BuzzSecondFactorToken $loginResult
+        if ([string]::IsNullOrEmpty($partialToken)) {
+            Write-Host ""
+            Write-Host "  Buzz asked for a second factor but no token could be found in its reply." -ForegroundColor Red
+            Write-Host "  Response structure (names and types only — no values are shown):" -ForegroundColor Yellow
+            Get-BuzzShape $loginResult | ForEach-Object { Write-Host $_ -ForegroundColor DarkGray }
+            Write-Host "  Please report the above.  Press Ctrl+C to abort." -ForegroundColor Yellow
+            Write-Host ""
+            continue
+        }
+
+        $otp = ""
+        while ([string]::IsNullOrEmpty($otp)) {
+            $otp = (Read-Host "One-time code from your authenticator app or email").Trim()
+        }
+
+        # The token goes in the Authorization: Bearer header — not in the request
+        # body, and not in the query string.  A "token" field in the body is ignored
+        # and answered with AccessDenied userId='-1' (the API reference's worked
+        # example showing it there is wrong; its request-field table correctly lists
+        # only cmd/otp/rememberdevice).  A _token query parameter is accepted, but
+        # putting credentials in a URL leaks them into server and proxy logs.
         $mfaBody = @{
             request = @{
-                cmd   = $mfaCmd
-                token = $partialToken
-                code  = $mfaCode
+                cmd = "secondfactorauthenticate"
+                otp = $otp
             }
         } | ConvertTo-Json -Depth 5
+        $mfaHeaders = @{ Accept = "application/json"; Authorization = "Bearer $partialToken" }
         $partialToken = $null
+        $otp          = $null
 
         try {
             $loginResult = Invoke-RestMethod @_bp `
-                -Uri             "$ServerUrl/cmd/$mfaCmd" `
+                -Uri             "$ServerUrl/cmd/secondfactorauthenticate" `
                 -Method          Post `
                 -ContentType     "application/json" `
+                -Headers         $mfaHeaders `
                 -Body            $mfaBody
         } catch {
             $mfaBody = $null
             Write-Host ""
-            Write-Host "  MFA request failed: $_" -ForegroundColor Red
+            Write-Host "  Second-factor request failed: $_" -ForegroundColor Red
             Write-Host "  Please try again.  Press Ctrl+C to abort." -ForegroundColor Yellow
             Write-Host ""
             continue
@@ -276,17 +404,14 @@ while ($null -eq $adminToken) {
         }
         $suffix = if ($loginMsg) { ": $loginMsg" } else { "" }
         Write-Host "  Login failed (code: $loginCode)$suffix." -ForegroundColor Red
+        $hint = Get-BuzzLoginHint $loginCode
+        if ($hint) { Write-Host "  $hint" -ForegroundColor Yellow }
         Write-Host "  Please check your credentials and try again.  Press Ctrl+C to abort." -ForegroundColor Yellow
         Write-Host ""
         continue
     }
 
-    $candidateToken = $null
-    if ($null -ne $loginResult.response -and $null -ne $loginResult.response.user) {
-        $candidateToken = $loginResult.response.user.token
-    } elseif ($null -ne $loginResult.user) {
-        $candidateToken = $loginResult.user.token
-    }
+    $candidateToken = Get-BuzzLoginToken $loginResult
 
     if ([string]::IsNullOrEmpty($candidateToken)) {
         Write-Host ""
@@ -334,8 +459,10 @@ if ($StoreLocation -eq 'LocalMachine') {
 
 # ── Step 4: Application info ──────────────────────────────────────────────────
 Write-Host "─── Step 4: Application Information ──────────────────────" -ForegroundColor Yellow
-Write-Host "This is included in the User-Agent header so Agilix support"
-Write-Host "can identify your integration if you need help."
+Write-Host "These describe the calling application, not the Buzz account.  They are"
+Write-Host "sent in the User-Agent header on every request so Agilix support can"
+Write-Host "identify your integration in server logs.  Nothing here is stored on a"
+Write-Host "Buzz account; step 5 asks separately for the account's own details."
 Write-Host ""
 $contactInformation     = (Read-Host "Your contact info (name, email, or URL)").Trim()
 $applicationInformation = (Read-Host "Application name (e.g. SisSync, RosterImport)").Trim()
@@ -363,42 +490,61 @@ $oauthUserId = ""
 if ($createNew -eq "Y") {
     Write-Host "Fetching available domains..." -NoNewline
     try {
+        # ListDomains, not "getdomains" — the latter is not a Buzz command and always
+        # failed, silently falling through to the manual domain-ID prompt below.
+        # domainid=0 means "every domain this account has ReadDomain rights on";
+        # limit=0 lifts the default 100-domain cap (capped server-side at 1000 for
+        # domainid=0).  https://api.agilixbuzz.com/docs/entry/Command/ListDomains.md
         $domainsResult = Invoke-RestMethod @_bp `
-            -Uri             "$ServerUrl/cmd/getdomains?_token=$([Uri]::EscapeDataString($adminToken))" `
-            -Method          Get
+            -Uri             "$ServerUrl/cmd/listdomains?domainid=0&limit=0" `
+            -Method          Get `
+            -Headers         @{ Accept = "application/json"; Authorization = "Bearer $adminToken" }
         Write-Host " done" -ForegroundColor Green
 
         $domains = @()
-        # Use PSObject.Properties to safely probe optional fields under Set-StrictMode -Version Latest.
-        # The Buzz getdomains response may nest domains as .response.domains.domain or .response.domain.
+        # ListDomains nests the list as .response.domains.domain, but when the account can
+        # read no domains it answers code OK with an EMPTY object -- "domains":{} -- which
+        # has no "domain" child at all.  Probe every level with PSObject.Properties;
+        # dereferencing .domains.domain directly throws under Set-StrictMode -Version Latest.
         $rawDomains = $null
-        $respObj = if ($domainsResult.PSObject.Properties['response']) { $domainsResult.response } else { $domainsResult }
-        if ($respObj.PSObject.Properties['domains']) {
-            $rawDomains = $respObj.domains.domain
-        } elseif ($respObj.PSObject.Properties['domain']) {
-            $rawDomains = $respObj.domain
+        $respObj = Get-BuzzProp $domainsResult 'response'
+        if ($null -eq $respObj) { $respObj = $domainsResult }
+        $domainsNode = Get-BuzzProp $respObj 'domains'
+        if ($null -ne $domainsNode) {
+            $rawDomains = Get-BuzzProp $domainsNode 'domain'
+        }
+        if ($null -eq $rawDomains) {
+            $rawDomains = Get-BuzzProp $respObj 'domain'
         }
 
         if ($rawDomains -is [array]) { $domains = $rawDomains }
         elseif ($rawDomains)         { $domains = @($rawDomains) }
 
+        # The Domain schema names this "id", not "domainid" -- reading "domainid" here
+        # yields an empty value, and selecting a domain by number then sends a blank
+        # domainid to CreateUsers2.  ("domainid" is the name used when *supplying* a
+        # domain, e.g. the CreateUsers2 request field.)
         if ($domains.Count -gt 0) {
             Write-Host ""
             Write-Host "Available domains:"
             $i = 1
             foreach ($d in $domains) {
-                Write-Host ("  {0,2}. {1,-30} (id: {2})" -f $i, $d.name, $d.domainid)
+                Write-Host ("  {0,2}. {1,-30} (id: {2})" -f $i, (Get-BuzzProp $d 'name'), (Get-BuzzProp $d 'id'))
                 $i++
             }
             Write-Host ""
             $domainChoice = (Read-Host "Enter domain number or type the domainid directly").Trim()
             if ($domainChoice -match '^\d+$' -and [int]$domainChoice -ge 1 -and [int]$domainChoice -le $domains.Count) {
-                $targetDomainId = $domains[[int]$domainChoice - 1].domainid
+                $targetDomainId = Get-BuzzProp $domains[[int]$domainChoice - 1] 'id'
             } else {
                 $targetDomainId = $domainChoice
             }
         } else {
-            $targetDomainId = (Read-Host "Domain ID for the new account (e.g. //myschool)").Trim()
+            # An empty list is normal when the admin holds no ReadDomain right anywhere,
+            # or when the domain simply has no child domains.  Not an error — just ask.
+            Write-Host ""
+            Write-Host "  No domains were listed for this account, so enter the target domain directly." -ForegroundColor Yellow
+            $targetDomainId = (Read-Host "Domain ID for the new account (e.g. //myschool or 12345678)").Trim()
         }
     } catch {
         Write-Host " (could not fetch domains: $_)" -ForegroundColor Yellow
@@ -409,7 +555,9 @@ if ($createNew -eq "Y") {
     $appUsername  = (Read-Host "Username for the Application Identity account (e.g. sis-sync)").Trim()
     $appFirstName = (Read-Host "First name (e.g. SIS)").Trim()
     $appLastName  = (Read-Host "Last name (e.g. Sync)").Trim()
-    $appEmail     = (Read-Host "Email address (optional, press Enter to skip)").Trim()
+    # Distinguish this from the Step 4 contact info: that string goes in the User-Agent
+    # header, whereas this becomes the "email" attribute of the account being created.
+    $appEmail     = (Read-Host "Email address for this account (optional, press Enter to skip)").Trim()
 
     Write-Host ""
     Write-Host "Creating Application Identity account '$appUsername'..." -NoNewline
@@ -423,6 +571,10 @@ if ($createNew -eq "Y") {
     }
     if ($appEmail) { $userFields["email"] = $appEmail }
 
+    # CreateUsers2 acts on one or more users, so the documented body shape is a "user"
+    # list under "requests"; we send a single-element list because we create one account.
+    # (There is no singular {"request":{...}} form for this command -- the server rejects
+    # that outright with code Format.)
     $createBody = @{
         requests = @{
             user = @($userFields)
@@ -431,9 +583,10 @@ if ($createNew -eq "Y") {
 
     try {
         $createResult = Invoke-RestMethod @_bp `
-            -Uri             "$ServerUrl/cmd/createusers2?_token=$([Uri]::EscapeDataString($adminToken))" `
+            -Uri             "$ServerUrl/cmd/createusers2" `
             -Method          Post `
             -ContentType     "application/json" `
+            -Headers         @{ Accept = "application/json"; Authorization = "Bearer $adminToken" } `
             -Body            $createBody
     } catch {
         $adminToken = $null
@@ -447,14 +600,31 @@ if ($createNew -eq "Y") {
         throw "CreateUsers2 failed: code=$createCode  $(ConvertTo-Json $createResult -Depth 5)"
     }
 
-    $firstResponse = if ($null -ne $createResult.response -and $null -ne $createResult.response.responses) {
-        $createResult.response.responses.response
-    } else { $null }
+    # CreateUsers2 reports the outcome for the user it created under responses.response,
+    # NOT in the outer code: the outer code is OK whenever the request was well formed,
+    # so a per-user AccessDenied arrives inside an "OK" envelope.  This holds even for a
+    # single user, so reading the inner code is the only way to know whether the account
+    # was actually created.  (BuzzApiClient.cs does the same via VerifyResponse's
+    # checkChildResponses pass.)
+    $respNode      = Get-BuzzProp $createResult 'response'
+    $responsesNode = Get-BuzzProp $respNode 'responses'
+    $firstResponse = Get-BuzzProp $responsesNode 'response'
     if ($firstResponse -is [array]) { $firstResponse = $firstResponse[0] }
 
-    $oauthUserId = if ($null -ne $firstResponse -and $null -ne $firstResponse.user) {
-        $firstResponse.user.userid
-    } else { $null }
+    $itemCode = Get-BuzzProp $firstResponse 'code'
+    if ($itemCode -and $itemCode -ne 'OK') {
+        $itemMsg = Get-BuzzProp $firstResponse 'message'
+        $adminToken = $null
+        Write-Host ""
+        if ($itemCode -eq 'AccessDenied') {
+            throw ("CreateUsers2 was denied (code: $itemCode$(if ($itemMsg) { " - $itemMsg" })).`n" +
+                   "The admin account needs the CreateUser right on domain $targetDomainId.`n" +
+                   "Grant it that right (and UpdateUser, so it can register the OAuth key in step 7), then re-run.")
+        }
+        throw "CreateUsers2 failed for the requested user: code=$itemCode$(if ($itemMsg) { " - $itemMsg" })"
+    }
+
+    $oauthUserId = Get-BuzzProp (Get-BuzzProp $firstResponse 'user') 'userid'
 
     if ([string]::IsNullOrEmpty($oauthUserId)) {
         $adminToken = $null
@@ -521,11 +691,13 @@ if ($IsWindows) {
     $thumbprint   = $certObj.Thumbprint
     # PublicKey.Key is a plain property (works in PS5.1); GetRSAPrivateKey() is an
     # extension method and cannot be called as an instance method in PS5.1.
-    $publicKeyPem = Export-SpkiPem $certObj.PublicKey.Key
+    $publicKeyPem = Export-BuzzSpkiPem $certObj.PublicKey.Key
     $certObj.Dispose()
 } else {
-    $rsa = [System.Security.Cryptography.RSA]::Create()
-    $rsa.KeySize = $KeySize
+    # Pass the size to Create().  The parameterless overload ignores a later
+    # KeySize assignment (the property is read-only on .NET Framework) and would
+    # yield a key below the 2048-bit minimum Buzz accepts.
+    $rsa = New-BuzzRsaKey -KeySize $KeySize
 
     $certReq = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
         $certSubject,
@@ -550,7 +722,7 @@ if ($IsWindows) {
     $thumbprint = $cert.Thumbprint
     $cert.Dispose()
 
-    $publicKeyPem = Export-SpkiPem $rsa
+    $publicKeyPem = Export-BuzzSpkiPem $rsa
     $rsa.Dispose()
 }
 
