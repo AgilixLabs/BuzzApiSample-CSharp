@@ -97,7 +97,9 @@ namespace BuzzAPISample
             JsonNode userNode = client.VerifyResponse(
                 await client.JsonRequest(HttpMethod.Get, "getuser2"));
 
-            string? userId    = userNode["user"]?["userid"]?.ToString();
+            // The User schema names this "id".  ("userid" is the CreateUsers2 *response*
+            // field for a newly created user - a different command, not an alias here.)
+            string? userId    = userNode["user"]?["id"]?.ToString();
             string? username  = userNode["user"]?["username"]?.ToString();
             string? firstName = userNode["user"]?["firstname"]?.ToString();
             string? lastName  = userNode["user"]?["lastname"]?.ToString();

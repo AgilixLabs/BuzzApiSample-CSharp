@@ -5,7 +5,8 @@
 #   ./scripts/setup-buzz-oauth.sh [OPTIONS]
 #
 # Options:
-#   -s URL        Buzz API server URL (prompted if omitted)
+#   -s URL        Buzz API server URL (prompted if omitted; default
+#                 https://backgroundapi.agilixbuzz.com)
 #   -o PATH       Output path for buzz-config.json (default: project root)
 #   -l LOCATION   Certificate store location: CurrentUser (default) or LocalMachine
 #                 (Linux only; ignored on macOS which uses the PEM file approach)
@@ -14,9 +15,12 @@
 #   -h            Show this help
 #
 # What this script does (Steps 1–8):
-#   1. Prompts for the Buzz server URL.
-#   2. Logs in as a Buzz administrator (supports MFA).  Credentials are verified
-#      early so mistakes are caught before any other information is entered.
+#   1. Prompts for the Buzz server URL (defaults to https://backgroundapi.agilixbuzz.com,
+#      the host intended for server-to-server integrations).
+#   2. Logs in as a Buzz administrator.  Accounts with multi-factor authentication are
+#      supported: login3 answers SecondFactorRequired, and the script then prompts for
+#      the one-time code and completes the login with secondfactorauthenticate.
+#      Credentials are verified early so mistakes are caught before anything else.
 #   3. Linux: prompts for certificate store location (CurrentUser or LocalMachine).
 #      macOS: shows the PEM file storage path (~/.config/buzz-oauth/private_key.pem).
 #   4. Prompts for contact info and application name.
@@ -243,7 +247,14 @@ PYEOF
 
 # Parse a scalar field from a Buzz API response — handles both JSON and XML.
 # Usage: buzz_get_field <response_text> <field>
-# Supported fields: code  token  partial_token  message  userid
+# Supported fields: code  token  mfa_token  message  userid  shape
+#
+# "token"     reads response.user.token — the session token of a successful login.
+# "mfa_token" locates the short-lived token login3 returns alongside
+#             SecondFactorRequired, whose position the API reference does not
+#             document; it probes the likely fields and then searches.
+# "shape"     lists property names and types (no values) to diagnose a response
+#             whose token could not be found.
 buzz_get_field() {
     local resp="$1" field="$2"
     # Pipe the response via stdin so it does not appear in process listings and
@@ -268,8 +279,57 @@ try:
     elif field == 'token':
         result = (((d.get('response') or {}).get('user') or {}).get('token') or
                   (d.get('user') or {}).get('token', ''))
-    elif field == 'partial_token':
-        result = ((d.get('response') or {}).get('token') or d.get('token', ''))
+    elif field in ('item_code', 'item_message'):
+        # CreateUsers2 / DeleteUsers report the outcome for the entity they acted on
+        # under response.responses.response, NOT in the outer code -- the outer code is
+        # OK whenever the request was merely well formed, so a per-entity AccessDenied
+        # arrives inside an "OK" envelope.  This holds even for a single entity.
+        r = d.get('response', d)
+        inner = (r.get('responses') or {}).get('response')
+        if isinstance(inner, list):
+            inner = inner[0] if inner else {}
+        if isinstance(inner, dict):
+            result = inner.get('code' if field == 'item_code' else 'message', '') or ''
+    elif field == 'mfa_token':
+        # The short-lived token login3 returns alongside SecondFactorRequired.  Only
+        # the successful-login shape is documented, so probe, then search.  Skip
+        # remembermfa: that token remembers a device and cannot complete this login.
+        r = d.get('response', d)
+        result = ((r.get('user') or {}).get('token') or '')
+        for name in ('token', 'mfatoken', 'secondfactortoken', 'logintoken'):
+            if result: break
+            v = r.get(name)
+            if isinstance(v, str) and v: result = v
+        if not result:
+            def walk(o, depth=0):
+                if depth > 6: return ''
+                if isinstance(o, dict):
+                    for k, v in o.items():
+                        if k == 'remembermfa': continue
+                        if k == 'token' and isinstance(v, str) and v: return v
+                    for k, v in o.items():
+                        if k == 'remembermfa': continue
+                        f = walk(v, depth + 1)
+                        if f: return f
+                elif isinstance(o, list):
+                    for v in o:
+                        f = walk(v, depth + 1)
+                        if f: return f
+                return ''
+            result = walk(r)
+    elif field == 'shape':
+        # Structure only — names and types, never values — for diagnosing a login
+        # whose token could not be located.
+        def shape(o, prefix=''):
+            out = []
+            if isinstance(o, dict):
+                for k, v in o.items():
+                    if isinstance(v, (dict, list)): out += shape(v, prefix + k + '.')
+                    else: out.append('  %s%s : %s' % (prefix, k, type(v).__name__))
+            elif isinstance(o, list):
+                for i, v in enumerate(o): out += shape(v, '%s[%d].' % (prefix.rstrip('.'), i))
+            return out
+        result = '\n'.join(shape(d))
     elif field == 'message':
         result = ((d.get('response') or {}).get('message') or d.get('message', ''))
     elif field == 'userid':
@@ -290,11 +350,17 @@ if not result:
             elif field == 'token':
                 u = r.find('user')
                 result = u.get('token', '') if u is not None else ''
-            elif field == 'partial_token':
-                result = r.get('token', '')
+            elif field in ('item_code', 'item_message'):
+                inner = r.find('.//responses/response')
+                if inner is not None:
+                    result = inner.get('code' if field == 'item_code' else 'message', '')
+            elif field == 'mfa_token':
+                u = r.find('user')
+                result = u.get('token', '') if u is not None else ''
                 if not result:
-                    u = r.find('user')
-                    result = u.get('token', '') if u is not None else ''
+                    for name in ('token', 'mfatoken', 'secondfactortoken', 'logintoken'):
+                        result = r.get(name, '')
+                        if result: break
             elif field == 'message':
                 result = r.get('message', '')
             elif field == 'userid':
@@ -315,17 +381,26 @@ PYEOF
 url_encode() { printf '%s' "$1" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(),safe=""),end="")'; }
 
 # POST a JSON body to a Buzz command endpoint.
-# /cmd/* endpoints use _token query param for session tokens (not Authorization: Bearer).
+# Session tokens go in an Authorization: Bearer header, not a _token query
+# parameter — a token in the URL leaks into server and proxy logs.
 # buzz_post <command> <json_body> [session_token]
 # Returns the full response body.
 buzz_post() {
     local cmd="$1" body="$2" token="${3:-}"
     local url="${SERVER_URL}/cmd/${cmd}"
-    [ -n "$token" ] && url="${url}?_token=$(url_encode "$token")"
-    local result curl_exit
+    local result curl_exit _hdr_args=()
+    # Write the Bearer header to a file in the already-managed temp dir so the
+    # token does not appear in the process list (visible via ps on multi-user systems).
+    if [ -n "$token" ]; then
+        printf 'Authorization: Bearer %s\n' "$token" > "${TMPDIR_SETUP}/bearer_post"
+        _hdr_args=(-H "@${TMPDIR_SETUP}/bearer_post")
+    fi
     curl_exit=0
+    # Buzz returns XML unless JSON is requested via Accept.
     result=$(printf '%s' "$body" | curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" -X POST "$url" \
-        -H "Content-Type: application/json" --data-binary @-) || curl_exit=$?
+        "${_hdr_args[@]+"${_hdr_args[@]}"}" \
+        -H "Content-Type: application/json" -H "Accept: application/json" --data-binary @-) || curl_exit=$?
+    [ -n "$token" ] && rm -f "${TMPDIR_SETUP}/bearer_post"
     if [ "$curl_exit" -ne 0 ]; then
         # Print a diagnostic but return empty — callers handle retry/abort themselves.
         # (The login loop checks for an empty response and retries interactively.)
@@ -361,18 +436,21 @@ buzz_put() {
 }
 
 # GET a Buzz command endpoint.
-# /cmd/* endpoints use _token query param for session tokens (not Authorization: Bearer).
+# Session tokens go in an Authorization: Bearer header, not a _token query
+# parameter — a token in the URL leaks into server and proxy logs.
 buzz_get() {
     local cmd="$1" params="${2:-}" token="${3:-}"
     local url="${SERVER_URL}/cmd/${cmd}"
-    if [ -n "$params" ] && [ -n "$token" ]; then
-        url="${url}?${params}&_token=$(url_encode "$token")"
-    elif [ -n "$params" ]; then
-        url="${url}?${params}"
-    elif [ -n "$token" ]; then
-        url="${url}?_token=$(url_encode "$token")"
+    local result _hdr_args=()
+    [ -n "$params" ] && url="${url}?${params}"
+    if [ -n "$token" ]; then
+        printf 'Authorization: Bearer %s\n' "$token" > "${TMPDIR_SETUP}/bearer_get"
+        _hdr_args=(-H "@${TMPDIR_SETUP}/bearer_get")
     fi
-    curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" "$url"
+    result=$(curl -sL "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" \
+        "${_hdr_args[@]+"${_hdr_args[@]}"}" -H "Accept: application/json" "$url")
+    [ -n "$token" ] && rm -f "${TMPDIR_SETUP}/bearer_get"
+    printf '%s' "$result"
 }
 
 # ── Banner ────────────────────────────────────────────────────────────────────
@@ -388,7 +466,8 @@ printf '\n'
 # ── Step 1: Server URL ────────────────────────────────────────────────────────
 section "Step 1: Buzz Server URL"
 if [ -z "$SERVER_URL" ]; then
-    prompt_required "Buzz API server URL (e.g. https://api.agilixbuzz.com)" SERVER_URL
+    # backgroundapi is the host intended for server-to-server integrations like this one.
+    prompt_required "Buzz API server URL" SERVER_URL "https://backgroundapi.agilixbuzz.com"
 fi
 SERVER_URL="${SERVER_URL%/}"  # strip trailing slash
 ok "  Server: $SERVER_URL"
@@ -432,31 +511,54 @@ sys.stdout.write(json.dumps({"request": {"cmd": "login3", "username": u, "passwo
     # Extract the response code — handles both JSON and XML Buzz API responses.
     LOGIN_CODE=$(buzz_get_field "$LOGIN_RESPONSE" code)
 
-    # ── MFA handling ──────────────────────────────────────────────────────────
-    # If the server returns a code indicating MFA is required, prompt for the code
-    # and call verifylogin to complete authentication.
-    # NOTE: The exact command name and field names depend on your server configuration.
-    #       Adjust MFA_CMD below if your server uses a different command.
-    if printf '%s' "$LOGIN_CODE" | grep -qiE '(factor|mfa|otp|challenge|verify|multifactor)'; then
-        printf ' MFA required.\n'
-        prompt_required "MFA / one-time code" MFA_CODE
+    # ── Multi-factor authentication ───────────────────────────────────────────
+    # login3 returns SecondFactorRequired when the password was correct but the
+    # account has MFA configured.  The token returned alongside that code is a
+    # short-lived token good only for secondfactorauthenticate, which returns the
+    # real session token.  See:
+    #   https://api.agilixbuzz.com/docs/entry/Command/Login3.md
+    #   https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
+    if [ "$LOGIN_CODE" = "SecondFactorConfigurationNowRequired" ]; then
+        printf '\n  This account must configure multi-factor authentication before it can\n'
+        printf '  be used.  Sign in to Buzz with this account, complete the MFA setup,\n'
+        printf '  then re-run this script.  Press Ctrl+C to abort.\n\n'
+        continue
+    fi
 
-        PARTIAL_TOKEN=$(buzz_get_field "$LOGIN_RESPONSE" partial_token)
+    if [ "$LOGIN_CODE" = "SecondFactorRequired" ]; then
+        printf ' multi-factor authentication required.\n'
 
-        MFA_CMD="verifylogin"   # ← adjust if your server uses a different command name
-        # Pipe the partial token and OTP via stdin so they do not appear in process listings.
-        MFA_BODY=$(printf '%s\n%s' "$PARTIAL_TOKEN" "$MFA_CODE" | python3 -c "
+        # Short-lived token that authorises only the secondfactorauthenticate call.
+        MFA_TOKEN=$(buzz_get_field "$LOGIN_RESPONSE" mfa_token)
+        if [ -z "$MFA_TOKEN" ]; then
+            printf '\n  Buzz asked for a second factor but no token could be found in its reply.\n'
+            printf '  Response structure (names and types only — no values are shown):\n'
+            buzz_get_field "$LOGIN_RESPONSE" shape
+            printf '\n  Please report the above.  Press Ctrl+C to abort.\n\n'
+            continue
+        fi
+
+        prompt_required "One-time code from your authenticator app or email" MFA_CODE
+
+        # The token goes in the Authorization: Bearer header (buzz_post's third
+        # argument) — not in the request body, where Buzz ignores it and answers
+        # AccessDenied userId='-1'.  The API reference's worked example showing it
+        # in the body is wrong; its request-field table correctly lists only
+        # cmd/otp/rememberdevice.
+        # Pipe the OTP via stdin so it does not appear in process listings.
+        MFA_BODY=$(printf '%s' "$MFA_CODE" | python3 -c '
 import sys, json
-t, c = sys.stdin.read().splitlines()[:2]
-sys.stdout.write(json.dumps({'request': {'cmd': '$MFA_CMD', 'token': t, 'code': c}}))
-")
-        PARTIAL_TOKEN=""
+c = sys.stdin.read().strip()
+sys.stdout.write(json.dumps({"request": {"cmd": "secondfactorauthenticate", "otp": c}}))
+')
+        MFA_CODE=""
 
-        LOGIN_RESPONSE=$(buzz_post "$MFA_CMD" "$MFA_BODY" 2>/dev/null || true)
+        LOGIN_RESPONSE=$(buzz_post "secondfactorauthenticate" "$MFA_BODY" "$MFA_TOKEN" 2>/dev/null || true)
+        MFA_TOKEN=""
         MFA_BODY=""
 
         if [ -z "$LOGIN_RESPONSE" ]; then
-            printf '  MFA request failed: network error.  Press Ctrl+C to abort.\n\n'
+            printf '  Second-factor request failed: network error.  Press Ctrl+C to abort.\n\n'
             continue
         fi
 
@@ -466,6 +568,25 @@ sys.stdout.write(json.dumps({'request': {'cmd': '$MFA_CMD', 'token': t, 'code': 
     if [ "$LOGIN_CODE" != "OK" ]; then
         LOGIN_MSG=$(buzz_get_field "$LOGIN_RESPONSE" message)
         printf '\n  Login failed (code: %s)%s\n' "$LOGIN_CODE" "${LOGIN_MSG:+: $LOGIN_MSG}"
+        case "$LOGIN_CODE" in
+            InvalidCredentials)
+                printf '  The username or password is not correct.\n' ;;
+            AccountLockout)
+                printf '  The account is locked out after too many failed password attempts.\n'
+                printf '  An administrator must unlock it.\n' ;;
+            PasswordExpired)
+                printf '  The password has expired and must be changed in Buzz first.\n' ;;
+            DeactivatedUserOrDomain)
+                printf '  The account or its domain has been deactivated.\n' ;;
+            LoginMethodNotAllowed)
+                printf '  This account does not allow password login (SSO-only accounts, for\n'
+                printf '  example).  Use a different admin account.\n' ;;
+            PasswordPolicyRequirementsNotMet)
+                printf '  The password no longer meets the domain password policy and must be\n'
+                printf '  reset in Buzz first.\n' ;;
+            NoLicense|LicenseExpired|LicenseNotYetValid|LicenseLimitExceeded)
+                printf "  There is a licensing problem with this account's domain.\\n" ;;
+        esac
         # If the code is empty the response format was not recognised — show it raw for diagnosis.
         if [ -z "$LOGIN_CODE" ]; then
             printf '  Server response: %.400s\n' "$LOGIN_RESPONSE"
@@ -524,8 +645,10 @@ fi
 
 # ── Step 4: Application info ──────────────────────────────────────────────────
 section "Step 4: Application Information"
-printf 'This is included in the User-Agent header so Agilix support\n'
-printf 'can identify your integration if you need help.\n\n'
+printf 'These describe the calling application, not the Buzz account.  They are\n'
+printf 'sent in the User-Agent header on every request so Agilix support can\n'
+printf 'identify your integration in server logs.  Nothing here is stored on a\n'
+printf "Buzz account; step 5 asks separately for the account's own details.\n\n"
 prompt_required "Your contact info (name, email, or URL)" CONTACT_INFO
 prompt_required "Application name (e.g. SisSync, RosterImport)" APP_NAME
 
@@ -542,9 +665,14 @@ OAUTH_USER_ID=""
 
 if printf '%s' "$CREATE_NEW" | grep -qiE '^y'; then
 
-    # List available domains to help the user choose
+    # List available domains to help the user choose.
+    # ListDomains, not "getdomains" — the latter is not a Buzz command and always
+    # failed, silently falling through to the manual domain-ID prompt below.
+    # domainid=0 means "every domain this account has ReadDomain rights on";
+    # limit=0 lifts the default 100-domain cap (capped server-side at 1000 for
+    # domainid=0).  https://api.agilixbuzz.com/docs/entry/Command/ListDomains.md
     printf 'Fetching available domains...'
-    DOMAINS_RESPONSE=$(buzz_get "getdomains" "" "$ADMIN_TOKEN" 2>/dev/null || true)
+    DOMAINS_RESPONSE=$(buzz_get "listdomains" "domainid=0&limit=0" "$ADMIN_TOKEN" 2>/dev/null || true)
     DOMAIN_CODE=$(buzz_get_field "$DOMAINS_RESPONSE" code)
 
     if [ "$DOMAIN_CODE" = "OK" ]; then
@@ -555,7 +683,10 @@ if printf '%s' "$CREATE_NEW" | grep -qiE '^y'; then
         DOMAIN_NAMES=()
         while IFS= read -r line; do
             DOMAIN_IDS+=("$line")
-        done < <(python3 - "$DOMAINS_RESPONSE" domainid <<'PYEOF'
+        # The Domain schema names the identifier "id", not "domainid" -- asking for
+        # "domainid" here yields empty strings and a blank domainid is then sent to
+        # CreateUsers2.  ("domainid" is the name used when *supplying* a domain.)
+        done < <(python3 - "$DOMAINS_RESPONSE" id <<'PYEOF'
 import sys
 resp, field = sys.argv[1], sys.argv[2]
 results = []
@@ -626,7 +757,9 @@ PYEOF
     prompt_required "Username for the account (e.g. sis-sync)"        APP_USERNAME
     prompt_required "First name (e.g. SIS)"                           APP_FIRSTNAME
     prompt_required "Last name (e.g. Sync)"                           APP_LASTNAME
-    prompt_optional "Email address"                                    APP_EMAIL
+    # Distinguish this from the Step 4 contact info: that string goes in the User-Agent
+    # header, whereas this becomes the "email" attribute of the account being created.
+    prompt_optional "Email address for this account"                   APP_EMAIL
 
     printf '\nCreating Application Identity account '\''%s'\''...' "$APP_USERNAME"
 
@@ -643,6 +776,9 @@ user = {
 }
 if email:
     user["email"] = email
+# CreateUsers2 acts on one or more users, so the documented body shape is a "user" list
+# under "requests"; we send a single-element list because we create one account.  (There
+# is no singular {"request":{...}} form -- the server rejects that with code Format.)
 body = {"requests": {"user": [user]}}
 print(json.dumps(body))
 PYEOF
@@ -654,6 +790,19 @@ PYEOF
     if [ "$CREATE_CODE" != "OK" ]; then
         printf '\n'
         die "CreateUsers2 failed (code: $CREATE_CODE).  Response: $CREATE_RESPONSE"
+    fi
+
+    # The outer OK only means the request was well formed; the per-user outcome is
+    # reported separately and must be checked or a denial looks like success.
+    CREATE_ITEM_CODE=$(buzz_get_field "$CREATE_RESPONSE" item_code)
+    if [ -n "$CREATE_ITEM_CODE" ] && [ "$CREATE_ITEM_CODE" != "OK" ]; then
+        CREATE_ITEM_MSG=$(buzz_get_field "$CREATE_RESPONSE" item_message)
+        printf '\n'
+        if [ "$CREATE_ITEM_CODE" = "AccessDenied" ]; then
+            die "$(printf 'CreateUsers2 was denied (code: %s%s).\n  The admin account needs the CreateUser right on domain %s.\n  Grant it that right (and UpdateUser, so it can register the OAuth key in step 7), then re-run.' \
+                "$CREATE_ITEM_CODE" "${CREATE_ITEM_MSG:+ - $CREATE_ITEM_MSG}" "$TARGET_DOMAIN")"
+        fi
+        die "CreateUsers2 failed for the requested user (code: $CREATE_ITEM_CODE${CREATE_ITEM_MSG:+ - $CREATE_ITEM_MSG})."
     fi
 
     OAUTH_USER_ID=$(buzz_get_field "$CREATE_RESPONSE" userid)

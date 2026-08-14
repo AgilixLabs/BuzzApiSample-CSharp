@@ -6,9 +6,8 @@
     Generates a 2048-bit (or larger) RSA private key and its corresponding public key in PEM
     format.  Only the public key is ever sent to Buzz; the private key must remain secret.
 
-    Key generation uses built-in .NET APIs when running under PowerShell 7+ (.NET 5 or later),
-    or falls back to OpenSSL when running under Windows PowerShell 5.1.
-    OpenSSL is included with Git for Windows and available via winget: winget install Git.Git
+    Runs on Windows PowerShell 5.1 (the shell that ships with Windows 11) and on
+    PowerShell 7+, with no external tools.  OpenSSL is not required.
 
 .PARAMETER OutputDir
     Directory to write private_key.pem and public_key.pem into.  Defaults to the current
@@ -27,12 +26,16 @@
     .\scripts\New-BuzzOAuthKey.ps1 -OutputDir C:\secrets\myapp -KeySize 4096
 
 .NOTES
+    Prefer .\scripts\Setup-BuzzOAuth.ps1 for new setups.  It keeps the private key in the
+    OS certificate store so it never exists as a file at all.  This script is for cases
+    that need a PEM file — containers, non-Windows hosts, or an external secrets manager.
+
     SECURITY
     - Add private_key.pem to .gitignore immediately.
     - Store the private key in a secrets manager (Azure Key Vault, AWS Secrets Manager, etc.)
       or an encrypted location — never in plain-text config files or source control.
     - Restrict file-system permissions so only the service account running your application
-      can read private_key.pem.
+      can read private_key.pem.  This script applies those restrictions when creating the file.
     - Rotate keys periodically.  See README.md for key rotation guidance.
 #>
 
@@ -45,6 +48,13 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+. (Join-Path $PSScriptRoot "BuzzPem.ps1")
+
+# $IsWindows is an automatic variable in PS6+; define it for Windows PowerShell 5.1.
+if ($null -eq (Get-Variable 'IsWindows' -ErrorAction SilentlyContinue)) {
+    $IsWindows = $env:OS -eq 'Windows_NT'
+}
 
 # ── Resolve output paths ────────────────────────────────────────────────────
 $OutputDir       = [System.IO.Path]::GetFullPath($OutputDir)
@@ -66,71 +76,39 @@ if ((Test-Path $privateKeyPath) -or (Test-Path $publicKeyPath)) {
     }
 }
 
-# ── Generate with built-in .NET APIs (PowerShell 7 / .NET 5+) ───────────────
-if ($PSVersionTable.PSVersion.Major -ge 7) {
-    Write-Host "Generating $KeySize-bit RSA key pair using .NET APIs..."
+# ── Restrict the private key file to the current user ───────────────────────
+# Called before any key material is written, so the file is never briefly readable
+# by other accounts.
+function Protect-KeyFile([string] $Path) {
+    # Truncate/create the file so there is something to apply permissions to.
+    [System.IO.File]::WriteAllText($Path, "")
 
-    $rsa = [System.Security.Cryptography.RSA]::Create()
-    $rsa.KeySize = $KeySize
-    try {
-        [System.IO.File]::WriteAllText($privateKeyPath, $rsa.ExportRSAPrivateKeyPem())
-        # Restrict private key to current user only
-        if ($IsWindows) {
-            $acl = Get-Acl $privateKeyPath
-            $acl.SetAccessRuleProtection($true, $false)
-            $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
-            $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-                [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
-                [System.Security.AccessControl.FileSystemRights]::FullControl,
-                [System.Security.AccessControl.AccessControlType]::Allow)
-            $acl.AddAccessRule($rule)
-            Set-Acl $privateKeyPath $acl
-        } else {
-            & chmod 600 $privateKeyPath
-        }
-        [System.IO.File]::WriteAllText($publicKeyPath,  $rsa.ExportSubjectPublicKeyInfoPem())
-    }
-    finally {
-        $rsa.Dispose()
+    if ($IsWindows) {
+        $acl = Get-Acl $Path
+        $acl.SetAccessRuleProtection($true, $false)   # break inheritance, drop inherited rules
+        $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.AccessControlType]::Allow)
+        $acl.AddAccessRule($rule)
+        Set-Acl $Path $acl
+    } else {
+        & chmod 600 $Path
     }
 }
-else {
-    # ── Fall back to OpenSSL (Windows PowerShell 5.1) ──────────────────────
-    $openssl = Get-Command openssl -ErrorAction SilentlyContinue
-    if ($null -eq $openssl) {
-        Write-Error @"
-OpenSSL was not found on PATH, and this script is running under Windows PowerShell 5.1
-which does not have the .NET 5 key-export APIs.
 
-Options:
-  1. Upgrade to PowerShell 7:  winget install Microsoft.PowerShell
-                                https://aka.ms/powershell
-  2. Install Git for Windows (includes OpenSSL):
-                                winget install Git.Git
-                                https://git-scm.com/
-  3. Run the script again after adding OpenSSL to PATH.
-"@
-        exit 1
-    }
+# ── Generate the key pair ───────────────────────────────────────────────────
+Write-Host "Generating $KeySize-bit RSA key pair (PowerShell $($PSVersionTable.PSVersion))..."
 
-    Write-Host "Generating $KeySize-bit RSA key pair using OpenSSL ($($openssl.Source))..."
-
-    & openssl genpkey -algorithm RSA -pkeyopt "rsa_keygen_bits:$KeySize" -out $privateKeyPath
-    if ($LASTEXITCODE -ne 0) { throw "openssl genpkey failed (exit $LASTEXITCODE)" }
-
-    # Restrict private key to current user only (matches the PS7+ branch hardening)
-    $acl = Get-Acl $privateKeyPath
-    $acl.SetAccessRuleProtection($true, $false)
-    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
-    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-        [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
-        [System.Security.AccessControl.FileSystemRights]::FullControl,
-        [System.Security.AccessControl.AccessControlType]::Allow)
-    $acl.AddAccessRule($rule)
-    Set-Acl $privateKeyPath $acl
-
-    & openssl pkey -in $privateKeyPath -pubout -out $publicKeyPath
-    if ($LASTEXITCODE -ne 0) { throw "openssl pkey -pubout failed (exit $LASTEXITCODE)" }
+$rsa = New-BuzzRsaKey -KeySize $KeySize
+try {
+    Protect-KeyFile $privateKeyPath
+    [System.IO.File]::WriteAllText($privateKeyPath, (Export-BuzzPkcs1Pem $rsa))
+    [System.IO.File]::WriteAllText($publicKeyPath,  (Export-BuzzSpkiPem  $rsa))
+}
+finally {
+    $rsa.Dispose()
 }
 
 # ── Summary ─────────────────────────────────────────────────────────────────
@@ -141,7 +119,7 @@ Write-Host "  Public key  : $publicKeyPath"
 Write-Host ""
 Write-Host "Next step: register the public key with Buzz."
 Write-Host "  .\scripts\Register-BuzzOAuthKey.ps1 ``"
-Write-Host "      -ServerUrl  <https://api.agilixbuzz.com> ``"
+Write-Host "      -ServerUrl  <https://backgroundapi.agilixbuzz.com> ``"
 Write-Host "      -AdminToken <bearer-token-of-an-admin-user> ``"
 Write-Host "      -UserId     <userid-of-application-identity-account> ``"
 Write-Host "      -Kid        <key-id-you-choose, e.g. 2025-q2> ``"

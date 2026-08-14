@@ -110,7 +110,7 @@ printf '  Public key  : %s\n' "$(cd -P "$(dirname -- "$PUB_KEY")" && printf '%s/
 printf '\n'
 printf 'Next step: register the public key with Buzz.\n'
 printf '  ./scripts/register-buzz-oauth-key.sh \\\n'
-printf '      -s <https://api.agilixbuzz.com> \\\n'
+printf '      -s <https://backgroundapi.agilixbuzz.com> \\\n'
 printf '      -t <bearer-token-of-admin-account> \\\n'
 printf '      -u <userid-of-application-identity-account> \\\n'
 printf '      -k <key-id-you-choose, e.g. 2025-q2> \\\n'

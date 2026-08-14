@@ -11,7 +11,7 @@
     per account (for zero-downtime rotation) and delete old keys when no longer needed.
 
 .PARAMETER ServerUrl
-    Buzz API server URL, e.g. https://api.agilixbuzz.com  (no trailing slash).
+    Buzz API server URL, e.g. https://backgroundapi.agilixbuzz.com  (no trailing slash).
 
 .PARAMETER AdminToken
     A valid Bearer access token for an account with the Update User right on the
@@ -35,13 +35,12 @@
 
 .PARAMETER PublicKeyPath
     Path to the PEM public key file in SubjectPublicKeyInfo (SPKI) format.
-    This is the public_key.pem produced by New-BuzzOAuthKey.ps1 or:
-        openssl pkey -in private_key.pem -pubout -out public_key.pem
+    This is the public_key.pem produced by New-BuzzOAuthKey.ps1.
 
 .EXAMPLE
     # Basic usage
     .\scripts\Register-BuzzOAuthKey.ps1 `
-        -ServerUrl   https://api.agilixbuzz.com `
+        -ServerUrl   https://backgroundapi.agilixbuzz.com `
         -AdminToken  "~0.ABC123..." `
         -UserId      12345678 `
         -Kid         "2025-q2" `
@@ -54,7 +53,7 @@
     $plainToken = $null
     try     { $plainToken = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-    .\scripts\Register-BuzzOAuthKey.ps1 -ServerUrl https://api.agilixbuzz.com `
+    .\scripts\Register-BuzzOAuthKey.ps1 -ServerUrl https://backgroundapi.agilixbuzz.com `
         -AdminToken $plainToken -UserId 12345678 -Kid "2025-q2" -PublicKeyPath .\public_key.pem
 
 .NOTES
@@ -115,7 +114,7 @@ if ($Kid -notmatch '^[A-Za-z0-9\-_\.]{1,128}$') {
 $publicKeyPem = Get-Content -Path $PublicKeyPath -Raw -Encoding UTF8
 
 if ($publicKeyPem -notmatch '-----BEGIN PUBLIC KEY-----') {
-    Write-Error "File '$PublicKeyPath' does not appear to be a SubjectPublicKeyInfo PEM public key.`nExpected a '-----BEGIN PUBLIC KEY-----' header.`nGenerate one with: openssl pkey -in private_key.pem -pubout -out public_key.pem"
+    Write-Error "File '$PublicKeyPath' does not appear to be a SubjectPublicKeyInfo PEM public key.`nExpected a '-----BEGIN PUBLIC KEY-----' header.`nGenerate one with: .\scripts\New-BuzzOAuthKey.ps1"
     exit 1
 }
 
@@ -167,7 +166,7 @@ catch {
         400 {
             Write-Host "HTTP 400 Bad Request — possible causes:" -ForegroundColor Yellow
             Write-Host "  - The public key is not in SubjectPublicKeyInfo (SPKI) PEM format."
-            Write-Host "    Re-generate with: openssl pkey -in private_key.pem -pubout -out public_key.pem"
+            Write-Host "    Re-generate with: .\scripts\New-BuzzOAuthKey.ps1"
             Write-Host "  - The key is smaller than the 2048-bit minimum."
             Write-Host "  - Account $UserId was not created with type=applicationidentity."
         }

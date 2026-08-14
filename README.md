@@ -105,7 +105,9 @@ certificate lands in the right home directory:
 sudo -u buzzservice ./scripts/setup-buzz-oauth.sh
 ```
 
-**Windows** (Windows PowerShell 5.1; or invoke via `Run-BuzzSample.ps1` from PowerShell 7+):
+**Windows** (Windows PowerShell 5.1 — the version that ships with Windows 11; nothing
+extra to install.  From PowerShell 7+, invoke it via `Run-BuzzSample.ps1`, which
+re-launches it under `powershell.exe`):
 ```powershell
 .\scripts\Setup-BuzzOAuth.ps1
 # For Windows services (run as Administrator):
@@ -179,8 +181,14 @@ This creates two files:
 Also choose a **Key ID** (`kid`) — a short string that identifies this key, e.g. `2025-q2` or
 `v1`.  Allowed characters: ASCII letters, digits, `-`, `_`, `.`.  Maximum 128 characters.
 
-**Requires** PowerShell 7+ or OpenSSL on PATH (included with Git for Windows).
-See the script's `-?` help for installation links.
+Runs on Windows PowerShell 5.1 (the version that ships with Windows 11) and on
+PowerShell 7+.  No OpenSSL and no other install is required.
+
+On Linux and macOS, use the bash equivalent, which uses the system OpenSSL:
+
+```bash
+./scripts/new-buzz-oauth-key.sh
+```
 
 If you prefer to generate the key manually with OpenSSL:
 
@@ -202,7 +210,7 @@ parameter help for how to obtain one).
 
 ```powershell
 .\scripts\Register-BuzzOAuthKey.ps1 `
-    -ServerUrl   https://api.agilixbuzz.com `
+    -ServerUrl   https://backgroundapi.agilixbuzz.com `
     -AdminToken  "<bearer-token-of-an-admin-account>" `
     -UserId      12345678 `
     -Kid         "2025-q2" `
@@ -219,7 +227,7 @@ curl -X PUT \
      -H "Authorization: Bearer $ADMIN_TOKEN" \
      -H "Content-Type: application/x-pem-file" \
      --data-binary @public_key.pem \
-     "https://api.agilixbuzz.com/api/users/12345678/keys/2025-q2"
+     "https://backgroundapi.agilixbuzz.com/api/users/12345678/keys/2025-q2"
 ```
 
 ### Step 4 — Create buzz-config.json and run the sample
@@ -228,7 +236,7 @@ Create `buzz-config.json` in the project root with the values from the previous 
 
 ```json
 {
-  "serverUrl":             "https://api.agilixbuzz.com",
+  "serverUrl":             "https://backgroundapi.agilixbuzz.com",
   "contactInformation":    "+https://example.com/; admin@example.com",
   "applicationInformation":"MySisSync",
   "oauthUserId":           "12345678",
@@ -241,7 +249,7 @@ Or, to use the OS certificate store instead of a PEM file (recommended):
 
 ```json
 {
-  "serverUrl":             "https://api.agilixbuzz.com",
+  "serverUrl":             "https://backgroundapi.agilixbuzz.com",
   "contactInformation":    "+https://example.com/; admin@example.com",
   "applicationInformation":"MySisSync",
   "oauthUserId":           "12345678",
@@ -274,7 +282,7 @@ using X509Certificate2 cert = BuzzApiClient.LoadCertificateFromStore(
 using RSA rsa = cert.GetRSAPrivateKey()!;
 
 BuzzApiClient client = new(
-    serverUrl:   "https://api.agilixbuzz.com",
+    serverUrl:   "https://backgroundapi.agilixbuzz.com",
     userAgent:   "MyApp/1.0 (CSharp; MyApp; admin@example.com)",
     oauthUserId: "12345678",
     oauthKid:    "2025-q2",
@@ -302,7 +310,7 @@ using RSA rsa = RSA.Create();
 rsa.ImportFromPem(File.ReadAllText("private_key.pem"));
 
 BuzzApiClient client = new(
-    serverUrl:   "https://api.agilixbuzz.com",
+    serverUrl:   "https://backgroundapi.agilixbuzz.com",
     userAgent:   "MyApp/1.0 (CSharp; MyApp; admin@example.com)",
     oauthUserId: "12345678",
     oauthKid:    "2025-q2",
@@ -313,7 +321,7 @@ BuzzApiClient client = new(
 
 ```csharp
 BuzzApiClient client = new(
-    serverUrl: "https://api.agilixbuzz.com",
+    serverUrl: "https://backgroundapi.agilixbuzz.com",
     userAgent: "MyApp/1.0 (CSharp; MyApp; admin@example.com)",
     userspace: "myschool",
     username:  "admin",
@@ -343,7 +351,7 @@ openssl pkcs12 -in ~/.dotnet/corefx/cryptography/x509stores/my/THUMBPRINT.pfx \
 
 ```bash
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
-     "https://api.agilixbuzz.com/api/users/12345678/keys"
+     "https://backgroundapi.agilixbuzz.com/api/users/12345678/keys"
 ```
 
 ### Rotating a key (zero downtime)
@@ -360,7 +368,7 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" \
 4. Once all running instances have switched over, delete the old key:
    ```bash
    curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
-        "https://api.agilixbuzz.com/api/users/12345678/keys/2025-q2"
+        "https://backgroundapi.agilixbuzz.com/api/users/12345678/keys/2025-q2"
    ```
 
 ### Revoking a compromised key
@@ -372,13 +380,13 @@ If a private key is compromised:
 3. Delete the compromised public key from Buzz:
    ```bash
    curl -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
-        "https://api.agilixbuzz.com/api/users/12345678/keys/compromised-kid"
+        "https://backgroundapi.agilixbuzz.com/api/users/12345678/keys/compromised-kid"
    ```
 4. Revoke all outstanding tokens for the account (invalidates any tokens the attacker holds):
    ```bash
    curl -X POST -H "Content-Type: application/x-www-form-urlencoded" \
         --data-urlencode "token=$CURRENT_ACCESS_TOKEN" \
-        "https://api.agilixbuzz.com/api/oauth/revoke"
+        "https://backgroundapi.agilixbuzz.com/api/oauth/revoke"
    ```
    Or, as an administrator, use the `TerminateUserSessions` command with the account's `userid`.
 
@@ -386,8 +394,14 @@ If a private key is compromised:
 
 ## Buzz Server URL
 
-The Buzz API documentation recommends using the background/batch server URL for long-running
-integrations to avoid time limits that apply to interactive API calls.
+The setup scripts default to `https://backgroundapi.agilixbuzz.com`.  Press Enter at the
+server URL prompt to accept it, or type a different URL (for a sandbox or a
+regional host) to override.
+
+The Buzz API documentation recommends using this background/batch server URL for long-running
+integrations to avoid the time limits that apply to interactive API calls — which is exactly
+what an OAuth Application Identity integration is.  `https://api.agilixbuzz.com` is the
+interactive host and is better suited to user-facing traffic.
 
 See [API Time Limiting](https://api.agilixbuzz.com/docs/#!/Concept/ApiTimeLimiting) for guidance
 on choosing the correct server URL for your use case.
@@ -402,5 +416,16 @@ on choosing the correct server URL for your use case.
 | `invalid_client: No active key found for the specified 'kid'.` | The `kid` in code does not match a registered key. | Re-run `Register-BuzzOAuthKey.ps1` and verify the `kid` matches exactly. |
 | `invalid_client: The client_assertion JWT signature or claims are invalid.` | Wrong private key, wrong `aud`, or `iss` ≠ `sub`. | Confirm `oauthUserId` matches the Application Identity account's `userid`, and that the private key corresponds to the registered public key. |
 | `invalid_client: No application identity account found for the specified 'sub'.` | The `oauthUserId` is not an Application Identity account. | Recreate the account with `type=applicationidentity`. |
-| HTTP 400 on `Register-BuzzOAuthKey.ps1` | Wrong PEM format or key too small. | Use `openssl pkey -pubout` to produce a SubjectPublicKeyInfo PEM (starts with `-----BEGIN PUBLIC KEY-----`). Minimum key size is 2048 bits. |
+| HTTP 400 on `Register-BuzzOAuthKey.ps1` | Wrong PEM format or key too small. | Regenerate with `New-BuzzOAuthKey.ps1`, which writes a SubjectPublicKeyInfo PEM (starts with `-----BEGIN PUBLIC KEY-----`). Minimum key size is 2048 bits. |
 | HTTP 401/403 on `Register-BuzzOAuthKey.ps1` | Admin token lacks Update User rights on the account. | Use an admin token for an account with the Update User right in the relevant domain. |
+
+### Troubleshooting setup login
+
+| Code shown by the setup script | Meaning | Fix |
+|-------|-------|-----|
+| `SecondFactorRequired` | The password was correct and the account has MFA enabled. | Expected — the script prompts for the one-time code and completes the login via `secondfactorauthenticate`. |
+| `SecondFactorConfigurationNowRequired` | The domain's password policy now requires MFA, but this account has not configured it. | Sign in to Buzz with the account, finish MFA setup, then re-run the script. |
+| `InvalidCredentials` | Wrong username or password. | The username must be `userspace/username`, e.g. `myschool/admin`. |
+| `AccountLockout` | Too many failed password attempts. | An administrator must unlock the account. |
+| `PasswordExpired` | The password expired under the domain's password policy. | Change the password in Buzz, then re-run the script. |
+| `LoginMethodNotAllowed` | The account does not permit password login (SSO-only, for example). | Use a different admin account for setup. |

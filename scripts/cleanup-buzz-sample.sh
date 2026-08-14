@@ -92,7 +92,11 @@ except Exception:
 
 # Parse a scalar field from a Buzz API response — handles both JSON and XML.
 # Usage: buzz_get_field <response_text> <field>
-# Supported fields: code  token  partial_token  message
+# Supported fields: code  token  mfa_token  message
+#
+# "token"     reads response.user.token — the session token of a successful login.
+# "mfa_token" locates the short-lived token login3 returns alongside
+#             SecondFactorRequired, whose position the API reference does not document.
 buzz_get_field() {
     local resp="$1" field="$2"
     # Pipe the response via stdin so it does not appear in process listings and
@@ -117,8 +121,44 @@ try:
     elif field == 'token':
         result = (((d.get('response') or {}).get('user') or {}).get('token') or
                   (d.get('user') or {}).get('token', ''))
-    elif field == 'partial_token':
-        result = ((d.get('response') or {}).get('token') or d.get('token', ''))
+    elif field in ('item_code', 'item_message'):
+        # DeleteUsers reports the outcome for the entity it acted on under
+        # response.responses.response, NOT in the outer code -- the outer code is OK
+        # whenever the request was merely well formed, so a per-entity failure arrives
+        # inside an "OK" envelope.  This holds even for a single entity.
+        r = d.get('response', d)
+        inner = (r.get('responses') or {}).get('response')
+        if isinstance(inner, list):
+            inner = inner[0] if inner else {}
+        if isinstance(inner, dict):
+            result = inner.get('code' if field == 'item_code' else 'message', '') or ''
+    elif field == 'mfa_token':
+        # The short-lived token login3 returns alongside SecondFactorRequired.  Only
+        # the successful-login shape is documented, so probe, then search.  Skip
+        # remembermfa: that token remembers a device and cannot complete this login.
+        r = d.get('response', d)
+        result = ((r.get('user') or {}).get('token') or '')
+        for name in ('token', 'mfatoken', 'secondfactortoken', 'logintoken'):
+            if result: break
+            v = r.get(name)
+            if isinstance(v, str) and v: result = v
+        if not result:
+            def walk(o, depth=0):
+                if depth > 6: return ''
+                if isinstance(o, dict):
+                    for k, v in o.items():
+                        if k == 'remembermfa': continue
+                        if k == 'token' and isinstance(v, str) and v: return v
+                    for k, v in o.items():
+                        if k == 'remembermfa': continue
+                        f = walk(v, depth + 1)
+                        if f: return f
+                elif isinstance(o, list):
+                    for v in o:
+                        f = walk(v, depth + 1)
+                        if f: return f
+                return ''
+            result = walk(r)
     elif field == 'message':
         result = ((d.get('response') or {}).get('message') or d.get('message', ''))
 except Exception:
@@ -134,11 +174,17 @@ if not result:
             elif field == 'token':
                 u = r.find('user')
                 result = u.get('token', '') if u is not None else ''
-            elif field == 'partial_token':
-                result = r.get('token', '')
+            elif field in ('item_code', 'item_message'):
+                inner = r.find('.//responses/response')
+                if inner is not None:
+                    result = inner.get('code' if field == 'item_code' else 'message', '')
+            elif field == 'mfa_token':
+                u = r.find('user')
+                result = u.get('token', '') if u is not None else ''
                 if not result:
-                    u = r.find('user')
-                    result = u.get('token', '') if u is not None else ''
+                    for name in ('token', 'mfatoken', 'secondfactortoken', 'logintoken'):
+                        result = r.get(name, '')
+                        if result: break
             elif field == 'message':
                 result = r.get('message', '')
     except Exception:
@@ -263,6 +309,7 @@ print(json.dumps(body), end='')
 
     login_response="$(printf '%s' "$login_body" | curl -sL -X POST \
         -H "Content-Type: application/json" \
+        -H "Accept: application/json" \
         --data-binary @- \
         "${SERVER_URL}/cmd/login3" "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" || true)"
     login_body=""
@@ -276,36 +323,64 @@ print(json.dumps(body), end='')
     # Extract code — tries multiple paths used by different Buzz API versions.
     login_code="$(buzz_get_field "$login_response" code)"
 
-    # MFA check
-    if printf '%s' "$login_code" | grep -qiE '(factor|challenge|otp|mfa|verify|multifactor)'; then
-        printf ' MFA verification required.\n'
-        printf 'Enter your MFA code: '
+    # ── Multi-factor authentication ───────────────────────────────────────────
+    # login3 answers SecondFactorRequired when the password was right but the account
+    # has MFA configured, returning a short-lived token good only for
+    # secondfactorauthenticate.  That call returns the real session token.
+    #   https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
+    if [ "$login_code" = "SecondFactorConfigurationNowRequired" ]; then
+        printf '\n  This account must configure multi-factor authentication before it can\n'
+        printf '  be used.  Complete MFA setup in Buzz, then re-run this script.\n'
+        printf '  Press Ctrl+C to abort.\n\n'
+        continue
+    fi
+
+    if [ "$login_code" = "SecondFactorRequired" ]; then
+        printf ' multi-factor authentication required.\n'
+
+        # Short-lived token that authorises only the secondfactorauthenticate call.
+        mfa_token="$(buzz_get_field "$login_response" mfa_token)"
+        if [ -z "$mfa_token" ]; then
+            printf '\n  Buzz asked for a second factor but no token could be found in its reply.\n'
+            printf '  Press Ctrl+C to abort.\n\n'
+            continue
+        fi
+
+        printf 'One-time code from your authenticator app or email: '
         read -r MFA_CODE
 
-        mfa_token="$(buzz_get_field "$login_response" partial_token)"
-
-        mfa_body="$(printf '%s\n%s\n' "$mfa_token" "$MFA_CODE" | python3 -c "
+        # The token goes in the Authorization: Bearer header — not in the request
+        # body, where Buzz ignores it and answers AccessDenied userId='-1', and not
+        # in the query string, which would leak it into server and proxy logs.
+        mfa_body="$(printf '%s' "$MFA_CODE" | python3 -c '
 import sys, json
-lines = sys.stdin.read().splitlines()
 body = {
-    'request': {
-        'cmd': 'verifylogin',
-        'token': lines[0],
-        'code':  lines[1]
+    "request": {
+        "cmd": "secondfactorauthenticate",
+        "otp": sys.stdin.read().strip()
     }
 }
-print(json.dumps(body), end='')
-")"
+print(json.dumps(body), end="")
+')"
+        MFA_CODE=""
+
+        # Header via file so the token stays out of the process list.
+        _mfa_hdr="$(mktemp)"
+        chmod 600 "$_mfa_hdr"
+        printf 'Authorization: Bearer %s\n' "$mfa_token" > "$_mfa_hdr"
         mfa_token=""
 
         login_response="$(printf '%s' "$mfa_body" | curl -sL -X POST \
+            -H "@${_mfa_hdr}" \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
             --data-binary @- \
-            "${SERVER_URL}/cmd/verifylogin" "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" || true)"
+            "${SERVER_URL}/cmd/secondfactorauthenticate" "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}" || true)"
+        rm -f "$_mfa_hdr"
         mfa_body=""
 
         if [ -z "$login_response" ]; then
-            printf '  MFA request failed: network error.  Press Ctrl+C to abort.\n\n'
+            printf '  Second-factor request failed: network error.  Press Ctrl+C to abort.\n\n'
             continue
         fi
 
@@ -315,6 +390,16 @@ print(json.dumps(body), end='')
     if [ "$login_code" != "OK" ]; then
         login_msg="$(buzz_get_field "$login_response" message)"
         printf '\n  Login failed (code: %s)%s\n' "$login_code" "${login_msg:+: $login_msg}"
+        case "$login_code" in
+            InvalidCredentials)
+                printf '  The username or password is not correct.\n' ;;
+            AccountLockout)
+                printf '  The account is locked out after too many failed password attempts.\n' ;;
+            PasswordExpired)
+                printf '  The password has expired and must be changed in Buzz first.\n' ;;
+            LoginMethodNotAllowed)
+                printf '  This account does not allow password login.  Use a different admin account.\n' ;;
+        esac
         # If the code is empty the response format was not recognised — show it raw for diagnosis.
         if [ -z "$login_code" ]; then
             printf '  Server response: %.400s\n' "$login_response"
@@ -379,23 +464,37 @@ printf '\n── Deleting Application Identity account (userid: %s) ──\n' "$
 
 delete_body="$(python3 -c "
 import sys, json
+# One user per call: 'user' is a single object, not a list.  DeleteUsers has no
+# singular envelope -- a {'request':{...}} body is rejected with code Format.
 body = {
     'requests': {
-        'user': [{'userid': sys.argv[1]}]
+        'user': {'userid': sys.argv[1]}
     }
 }
 print(json.dumps(body), end='')
 " "$OAUTH_USER_ID")"
 
-_token_enc="$(printf '%s' "$ADMIN_TOKEN" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(),safe=""),end="")')"
+# Bearer header via file: keeps the token out of both the URL (server/proxy logs)
+# and the process list.
+_del_hdr="$(mktemp)"
+chmod 600 "$_del_hdr"
+printf 'Authorization: Bearer %s\n' "$ADMIN_TOKEN" > "$_del_hdr"
 delete_response="$(printf '%s' "$delete_body" | curl -sL -X POST \
-    "${SERVER_URL}/cmd/deleteusers?_token=${_token_enc}" \
+    "${SERVER_URL}/cmd/deleteusers" \
+    -H "@${_del_hdr}" \
     -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
     --data-binary @- \
     "${CURL_OPTS_ARR[@]+"${CURL_OPTS_ARR[@]}"}")"
-_token_enc=""
+rm -f "$_del_hdr"
 
-delete_code="$(buzz_get_field "$delete_response" code)"
+# The per-user outcome is authoritative; the outer code is OK whenever the request was
+# merely well formed, so reading it first would report success for a failed delete.
+delete_code="$(buzz_get_field "$delete_response" item_code)"
+delete_msg="$(buzz_get_field "$delete_response" item_message)"
+if [ -z "$delete_code" ]; then
+    delete_code="$(buzz_get_field "$delete_response" code)"
+fi
 
 case "$delete_code" in
     OK)
@@ -407,7 +506,7 @@ case "$delete_code" in
         printf '  Continuing with remaining cleanup steps.\n' >&2
         ;;
     *)
-        printf 'Warning: delete returned code "%s".\n' "$delete_code" >&2
+        printf 'Warning: delete returned code "%s"%s.\n' "$delete_code" "${delete_msg:+ - $delete_msg}" >&2
         printf '  Continuing with remaining cleanup steps.\n' >&2
         ;;
 esac

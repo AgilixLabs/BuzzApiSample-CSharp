@@ -36,6 +36,52 @@ function Get-JsonProp([psobject]$obj, [string]$name) {
     return $null
 }
 
+# Recursively find a 'token' property.  Skips remembermfa, whose token is a
+# remember-this-device credential and cannot complete a second-factor login.
+function Find-BuzzToken([object]$node, [int]$depth = 0) {
+    if ($null -eq $node -or $depth -gt 6) { return $null }
+    if ($node -is [string] -or $node -is [ValueType]) { return $null }
+
+    if ($node -is [System.Collections.IEnumerable]) {
+        foreach ($item in $node) {
+            $found = Find-BuzzToken $item ($depth + 1)
+            if ($found) { return $found }
+        }
+        return $null
+    }
+    foreach ($p in $node.PSObject.Properties) {
+        if ($p.Name -eq 'remembermfa') { continue }
+        if ($p.Name -eq 'token' -and $p.Value -is [string] -and $p.Value) { return $p.Value }
+    }
+    foreach ($p in $node.PSObject.Properties) {
+        if ($p.Name -eq 'remembermfa') { continue }
+        $found = Find-BuzzToken $p.Value ($depth + 1)
+        if ($found) { return $found }
+    }
+    return $null
+}
+
+# The short-lived token login3 returns alongside SecondFactorRequired.  The API
+# reference documents the shape of a *successful* login only, so probe the likely
+# locations rather than assuming one.
+function Get-BuzzSecondFactorToken([psobject]$response) {
+    $inner = Get-JsonProp $response 'response'
+    if ($null -eq $inner) { $inner = $response }
+
+    $candidate = Get-JsonProp (Get-JsonProp $inner 'user') 'token'
+    if (-not [string]::IsNullOrEmpty($candidate)) { return $candidate }
+
+    foreach ($name in 'token', 'mfatoken', 'secondfactortoken', 'logintoken') {
+        $candidate = Get-JsonProp $inner $name
+        if ($candidate -is [string] -and -not [string]::IsNullOrEmpty($candidate)) { return $candidate }
+    }
+    # response.body.token carries the same value on the observed shape.
+    $candidate = Get-JsonProp (Get-JsonProp $inner 'body') 'token'
+    if ($candidate -is [string] -and -not [string]::IsNullOrEmpty($candidate)) { return $candidate }
+
+    return (Find-BuzzToken $inner)
+}
+
 $ScriptDir   = $PSScriptRoot
 $ProjectRoot = Split-Path $ScriptDir -Parent
 $ConfigFile  = Join-Path $ProjectRoot 'buzz-config.json'
@@ -126,7 +172,8 @@ while ($null -eq $AdminToken) {
     $loginResp = $null
     try {
         $loginResp = Invoke-RestMethod @_bp -Method Post -Uri "$ServerUrl/cmd/login3" `
-            -ContentType 'application/json' -Body $loginBody -ErrorAction Stop
+            -ContentType 'application/json' -Headers @{ Accept = 'application/json' } `
+            -Body $loginBody -ErrorAction Stop
     } catch {
         Write-Host ''
         Write-Host "  Network error: $_" -ForegroundColor Red
@@ -139,28 +186,58 @@ while ($null -eq $AdminToken) {
     $loginCode = Get-JsonProp (Get-JsonProp $loginResp 'response') 'code'
     if (-not $loginCode) { $loginCode = Get-JsonProp $loginResp 'code' }
 
-    # MFA check
-    if ($loginCode -match '(?i)(factor|challenge|otp|mfa|verify|multifactor)') {
-        Write-Host ' MFA verification required.' -ForegroundColor Yellow
-        $mfaCode  = Read-Host 'Enter your MFA code'
-        $mfaToken = Get-JsonProp (Get-JsonProp $loginResp 'response') 'token'
+    # ── Multi-factor authentication ───────────────────────────────────────────
+    # login3 answers SecondFactorRequired when the password was right but the account
+    # has MFA configured, returning a short-lived token good only for
+    # secondfactorauthenticate.  That call returns the real session token.
+    #   https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
+    if ($loginCode -eq 'SecondFactorConfigurationNowRequired') {
+        Write-Host ''
+        Write-Host '  This account must configure multi-factor authentication before it can' -ForegroundColor Red
+        Write-Host '  be used.  Complete MFA setup in Buzz, then re-run this script.' -ForegroundColor Yellow
+        Write-Host '  Press Ctrl+C to abort.' -ForegroundColor Yellow
+        Write-Host ''
+        continue
+    }
 
+    if ($loginCode -eq 'SecondFactorRequired') {
+        Write-Host ' multi-factor authentication required.' -ForegroundColor Yellow
+
+        $mfaToken = Get-BuzzSecondFactorToken $loginResp
+        if ([string]::IsNullOrEmpty($mfaToken)) {
+            Write-Host ''
+            Write-Host '  Buzz asked for a second factor but no token could be found in its reply.' -ForegroundColor Red
+            Write-Host '  Press Ctrl+C to abort.' -ForegroundColor Yellow
+            Write-Host ''
+            continue
+        }
+
+        $otp = ''
+        while ([string]::IsNullOrEmpty($otp)) {
+            $otp = (Read-Host 'One-time code from your authenticator app or email').Trim()
+        }
+
+        # The token goes in the Authorization: Bearer header — not in the request
+        # body (ignored, answered with AccessDenied userId='-1'), and not in the
+        # query string (accepted, but leaks credentials into server/proxy logs).
         $mfaBody = [ordered]@{
             request = [ordered]@{
-                cmd   = 'verifylogin'
-                token = $mfaToken
-                code  = $mfaCode
+                cmd = 'secondfactorauthenticate'
+                otp = $otp
             }
         } | ConvertTo-Json -Depth 5
+        $mfaHeaders = @{ Accept = 'application/json'; Authorization = "Bearer $mfaToken" }
         $mfaToken = $null
+        $otp      = $null
 
         try {
-            $loginResp = Invoke-RestMethod @_bp -Method Post -Uri "$ServerUrl/cmd/verifylogin" `
-                -ContentType 'application/json' -Body $mfaBody -ErrorAction Stop
+            $loginResp = Invoke-RestMethod @_bp -Method Post -Uri "$ServerUrl/cmd/secondfactorauthenticate" `
+                -ContentType 'application/json' -Headers $mfaHeaders `
+                -Body $mfaBody -ErrorAction Stop
         } catch {
             $mfaBody = $null
             Write-Host ''
-            Write-Host "  MFA request failed: $_" -ForegroundColor Red
+            Write-Host "  Second-factor request failed: $_" -ForegroundColor Red
             Write-Host '  Please try again.  Press Ctrl+C to abort.' -ForegroundColor Yellow
             Write-Host ''
             continue
@@ -221,6 +298,8 @@ if ($OAuthKid) {
 Write-Host ''
 Write-Host "── Deleting Application Identity account (userid: $OAuthUserId) ──"
 
+# DeleteUsers acts on one or more users, so the documented body shape is a "user" list
+# under "requests"; we send a single-element list because we delete one account.
 $deleteBody = @{
     requests = @{
         user = @(@{ userid = $OAuthUserId })
@@ -229,26 +308,29 @@ $deleteBody = @{
 
 try {
     $deleteResp = Invoke-RestMethod @_bp -Method Post `
-        -Uri "$ServerUrl/cmd/deleteusers?_token=$([Uri]::EscapeDataString($AdminToken))" `
+        -Uri "$ServerUrl/cmd/deleteusers" `
+        -Headers @{ Accept = 'application/json'; Authorization = "Bearer $AdminToken" } `
         -ContentType 'application/json' -Body $deleteBody -ErrorAction Stop
 
-    # deleteusers can return code at several paths depending on API version; probe each safely.
-    $deleteCode = Get-JsonProp $deleteResp 'code'
+    # The per-user outcome lives at response.responses.response.code and is authoritative.
+    # The OUTER code is OK whenever the request was merely well formed, so checking it
+    # first would report success for a delete that was actually denied or not found.
+    $respNode  = Get-JsonProp $deleteResp 'response'
+    $innerNode = Get-JsonProp (Get-JsonProp $respNode 'responses') 'response'
+    if ($innerNode -is [array]) { $innerNode = $innerNode[0] }
+    $deleteCode = Get-JsonProp $innerNode 'code'
+    $deleteMsg  = Get-JsonProp $innerNode 'message'
+
+    # Fall back to the envelope only when no per-user result was returned at all.
     if (-not $deleteCode) {
-        $resp1 = Get-JsonProp $deleteResp 'response'
-        $deleteCode = Get-JsonProp $resp1 'code'
-    }
-    if (-not $deleteCode) {
-        $resps = Get-JsonProp $deleteResp 'responses'
-        $userArr = Get-JsonProp $resps 'user'
-        $first = if ($userArr -is [array]) { $userArr[0] } else { $userArr }
-        $deleteCode = Get-JsonProp $first 'code'
+        $deleteCode = Get-JsonProp $respNode 'code'
+        if (-not $deleteCode) { $deleteCode = Get-JsonProp $deleteResp 'code' }
     }
 
     if ($deleteCode -eq 'OK') {
         Write-Host 'Application Identity account deleted.'
     } else {
-        Write-Warning "Delete returned code '$deleteCode' — continuing."
+        Write-Warning "Delete returned code '$deleteCode'$(if ($deleteMsg) { " - $deleteMsg" }) - continuing."
     }
 } catch {
     Write-Warning "Error deleting account: $($_.Exception.Message) — continuing."

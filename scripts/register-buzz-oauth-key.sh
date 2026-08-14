@@ -5,7 +5,7 @@
 #   ./scripts/register-buzz-oauth-key.sh -s SERVER_URL -u USER_ID -k KID -p PUBLIC_KEY_PATH
 #
 # Options:
-#   -s URL    Buzz API server URL, e.g. https://api.agilixbuzz.com  (no trailing slash)
+#   -s URL    Buzz API server URL, e.g. https://backgroundapi.agilixbuzz.com  (no trailing slash)
 #   -t TOKEN  Bearer token (optional — prefer BUZZ_ADMIN_TOKEN env var or interactive prompt to
 #             avoid exposing the token in shell history and process listings)
 #   -u ID     userid of the Application Identity account (from OAuth Setup Step 5)
@@ -25,7 +25,7 @@
 # import sys, json
 # u, p = sys.stdin.read().splitlines()[:2]
 # print(json.dumps({'request':{'cmd':'login3','username':u,'password':p}}))" | \
-#               curl -s -X POST https://api.agilixbuzz.com/cmd/login3 \
+#               curl -s -X POST https://backgroundapi.agilixbuzz.com/cmd/login3 \
 #                   -H 'Content-Type: application/json' --data-binary @- | \
 #               python3 -c "import sys,json; print(json.load(sys.stdin)['response']['user']['token'])")
 #     ADMIN_PASS=''
@@ -34,7 +34,7 @@
 #
 # Examples:
 #   ./scripts/register-buzz-oauth-key.sh \
-#       -s https://api.agilixbuzz.com \
+#       -s https://backgroundapi.agilixbuzz.com \
 #       -t "~0.ABC123..." \
 #       -u 12345678 \
 #       -k "2025-q2" \
