@@ -289,8 +289,9 @@ BuzzApiClient client = new(
     privateKey:  rsa);
 
 // BuzzApiClient obtains and refreshes Bearer tokens automatically.
+// domainid=0 lists every domain this account has ReadDomain rights on.
 JsonNode response = client.VerifyResponse(
-    await client.JsonRequest(HttpMethod.Get, "getdomains"));
+    await client.JsonRequest(HttpMethod.Get, "listdomains", "domainid=0"));
 ```
 
 **Platform notes (Windows / Linux cert-store path):**
@@ -327,8 +328,9 @@ BuzzApiClient client = new(
     username:  "admin",
     password:  "secret");
 
+// domainid=0 lists every domain this account has ReadDomain rights on.
 JsonNode response = client.VerifyResponse(
-    await client.JsonRequest(HttpMethod.Get, "getdomains"));
+    await client.JsonRequest(HttpMethod.Get, "listdomains", "domainid=0"));
 ```
 
 ---
