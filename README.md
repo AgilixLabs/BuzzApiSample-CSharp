@@ -421,6 +421,29 @@ on choosing the correct server URL for your use case.
 | HTTP 400 on `Register-BuzzOAuthKey.ps1` | Wrong PEM format or key too small. | Regenerate with `New-BuzzOAuthKey.ps1`, which writes a SubjectPublicKeyInfo PEM (starts with `-----BEGIN PUBLIC KEY-----`). Minimum key size is 2048 bits. |
 | HTTP 401/403 on `Register-BuzzOAuthKey.ps1` | Admin token lacks Update User rights on the account. | Use an admin token for an account with the Update User right in the relevant domain. |
 
+### Multi-factor authentication
+
+MFA affects only the **administrator login** that `Setup-BuzzOAuth.ps1` and
+`Cleanup-BuzzSample.ps1` use to create the Application Identity account and register its
+key.  It does **not** affect the sample or your integration.
+
+An [Application Identity account](https://api.agilixbuzz.com/docs/entry/Concept/OAuth.md)
+authenticates with a signed JWT assertion instead of a password, and cannot be logged into
+interactively at all.  The API reference makes the consequence explicit: OAuth *"works in
+domains where MFA is required for administrative accounts, since it authenticates via
+signed JWT assertions rather than a username and password"*
+([Login3](https://api.agilixbuzz.com/docs/entry/Command/Login3.md)).  So an integration
+built on this sample keeps running unattended in a domain that requires MFA of every
+administrator — which is a large part of why OAuth is preferred over the legacy `login3`
+flow.
+
+When the admin account does have a second factor, `login3` answers `SecondFactorRequired`
+and returns a short-lived token.  The script prompts for the one-time code and presents
+both to
+[`secondfactorauthenticate`](https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md),
+which returns the real session token.  That short-lived token is sent in an
+`Authorization: Bearer` header — it is ignored if placed in the request body.
+
 ### Troubleshooting setup login
 
 | Code shown by the setup script | Meaning | Fix |
