@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Xml.Linq;
 
 namespace BuzzAPISample
 {
@@ -17,6 +18,33 @@ namespace BuzzAPISample
         private const int _retriesToMake = 5;
         private static readonly TimeSpan _initialWaitDuration = TimeSpan.FromMilliseconds(1000);
         private static readonly TimeSpan _maxRetryWaitDuration = TimeSpan.FromMilliseconds(64000);
+
+        /// <summary>
+        /// The longest server-directed wait (Retry-After / X-RateLimit-Reset) the client will sit out before retrying.
+        /// Rate-limit windows are five minutes and the server adds jitter, so a Retry-After of several minutes is normal.
+        /// Retrying before the server says to only burns quota, so a longer wait fails the request instead of retrying early.
+        /// </summary>
+        private static readonly TimeSpan _maxServerDirectedWait = TimeSpan.FromMinutes(10);
+
+        /// <summary>
+        /// Response codes the server uses in the XML/JSON envelope to say "slow down and retry later".
+        /// Throttles are usually reported with HTTP 200 (the server wraps them for legacy clients), so the
+        /// envelope code must be checked even when the HTTP status is a success.
+        /// "TooManyRequests" is what every throttle collapses to when the server is set to report throttles generically;
+        /// "Service Unavailable" is the code written when the server sheds load before a request is authenticated.
+        /// </summary>
+        private static readonly HashSet<string> s_throttleCodes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "TooManyRequests", "RetryLater", "LimitExceeded", "RateLimit", "TimeLimit",
+            "ServerOverwhelmed", "BackendPressure", "Service Unavailable", "ServiceUnavailable",
+        };
+
+        /// <summary>
+        /// UTC ticks before which no request from this client should be sent. Set whenever the server signals
+        /// throttling or backend pressure, so concurrent requests sharing this client back off together
+        /// instead of each discovering the throttle separately.
+        /// </summary>
+        private long _throttledUntilTicks;
 
         /// <summary>
         /// How far before token expiry to proactively refresh. Tokens are valid for 1 hour;
@@ -278,22 +306,43 @@ namespace BuzzAPISample
                 jsonToVerify = childResponse;
             }
 
-            if (jsonToVerify["code"]?.ToString() != "OK")
+            string? code = jsonToVerify["code"]?.ToString();
+            if (code != "OK")
             {
                 string responseText = CloneAndRedact(responseJson).ToString();
                 _logger?.LogError("Buzz API call failed. Expected response.code to be OK, found: {ResponseText}", responseText);
+                if (IsThrottleCode(code))
+                    throw new BuzzApiThrottledException($"Buzz API call was throttled ({code}): {responseText}", code, responseJson, Array.Empty<int>(),
+                        statusCode: ThrottleStatusCode(HttpStatusCode.OK, code));
                 throw new Exception($"Buzz API call failed. Expected response.code to be OK, found: {responseText}");
             }
 
             if (checkChildResponses)
             {
-                JsonArray? responses = jsonToVerify["responses"]?["response"] as JsonArray;
-                if (responses is not null)
+                List<JsonNode?> responses = GetChildResponses(jsonToVerify);
+
+                // Batch and multi-object commands report per-item throttles under an outer OK. Report them together
+                // so the caller can resubmit just those items. Throttled batch items were rejected without running;
+                // a multi-object row that hit BackendPressure (e.g. a database timeout) may have partially run.
+                List<int> throttledIndexes = new();
+                for (int i = 0; i < responses.Count; i++)
                 {
-                    foreach (var response in responses)
-                    {
-                        VerifyResponse(response);
-                    }
+                    if (IsThrottleCode(responses[i]?["code"]?.ToString()))
+                        throttledIndexes.Add(i);
+                }
+                if (throttledIndexes.Count > 0)
+                {
+                    string? firstCode = responses[throttledIndexes[0]]?["code"]?.ToString();
+                    _logger?.LogWarning("{ThrottledCount} of {ItemCount} items were throttled ({Code}); resubmit items {Indexes}",
+                        throttledIndexes.Count, responses.Count, firstCode, string.Join(",", throttledIndexes));
+                    throw new BuzzApiThrottledException(
+                        $"{throttledIndexes.Count} of {responses.Count} items were throttled ({firstCode}). Resubmit the items at indexes {string.Join(",", throttledIndexes)}.",
+                        firstCode, responseJson, throttledIndexes, statusCode: ThrottleStatusCode(HttpStatusCode.OK, firstCode));
+                }
+
+                foreach (var response in responses)
+                {
+                    VerifyResponse(response);
                 }
             }
             return jsonToVerify;
@@ -335,12 +384,23 @@ namespace BuzzAPISample
             }
 
             using HttpContent? content = json is null ? null : new StringContent(json.ToJsonString(), Encoding.UTF8, "application/json");
-            using HttpResponseMessage response = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
-            JsonNode? responseNode = await JsonNode.ParseAsync(await response.Content.ReadAsStreamAsync(cancel), cancellationToken: cancel);
-            TraceResponse(responseNode);
+            JsonNode? responseNode;
+            bool authenticationRejected;
+            try
+            {
+                responseNode = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
+                TraceResponse(responseNode);
+                authenticationRejected = GetResponseCode(responseNode) == "NoAuthentication";
+            }
+            // REST-style endpoints report an expired or revoked token as HTTP 401, possibly with no envelope
+            catch (HttpRequestException e) when (e.StatusCode == HttpStatusCode.Unauthorized && includeToken && Token is not null && (_oauthEnabled || _autoLoginEnabled))
+            {
+                responseNode = null;
+                authenticationRejected = true;
+            }
 
             // If the token expired or was revoked, re-authenticate and retry the request once
-            if (includeToken && Token is not null && responseNode?["response"]?["code"]?.ToString() == "NoAuthentication")
+            if (includeToken && Token is not null && authenticationRejected)
             {
                 if (_oauthEnabled)
                 {
@@ -365,14 +425,18 @@ namespace BuzzAPISample
                     return responseNode;
                 }
                 // content is StringContent (ByteArrayContent-backed) so its stream rewinds on re-read — safe to reuse.
-                using HttpResponseMessage retryResponse = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
-                responseNode = await JsonNode.ParseAsync(await retryResponse.Content.ReadAsStreamAsync(cancel), cancellationToken: cancel);
+                responseNode = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
                 TraceResponse(responseNode);
             }
             return responseNode;
         }
 
-        private async ValueTask<HttpResponseMessage> RequestWithRetry(HttpMethod httpMethod, string? cmd, string? parameters, HttpContent? content,
+        /// <summary>
+        /// Sends a request, retrying transient failures, and returns the parsed response envelope (XML or JSON, normalized to JSON).
+        /// Throttling is recognized from the HTTP status (429/503) or from the envelope code, since the server
+        /// usually reports throttles as HTTP 200 with a code like "TimeLimit" or "BackendPressure" in the body.
+        /// </summary>
+        private async ValueTask<JsonNode?> RequestWithRetry(HttpMethod httpMethod, string? cmd, string? parameters, HttpContent? content,
             bool includeToken = true, string acceptsContentType = "application/json", CancellationToken cancel = default)
         {
             // OAuth uses Authorization: Bearer header; password auth uses _token query parameter
@@ -387,8 +451,9 @@ namespace BuzzAPISample
 
             while (true)
             {
+                await WaitForThrottleWindow(cancel);
+
                 RetryConditionHeaderValue? retryHeader = null;
-                HttpResponseMessage? response = null;
                 try
                 {
                     using HttpRequestMessage httpRequestMessage = new(httpMethod, requestUri);
@@ -407,43 +472,67 @@ namespace BuzzAPISample
 
                     TraceRequest(requestUri);
 
+                    HttpResponseMessage sent;
                     try
                     {
-                        response = await _httpClient.SendAsync(httpRequestMessage, cancel);
+                        sent = await _httpClient.SendAsync(httpRequestMessage, cancel);
                     }
                     finally
                     {
                         httpRequestMessage.Content = null; // detach shared content; caller owns its lifecycle
                     }
+                    using HttpResponseMessage response = sent;
                     retryHeader = response.Headers.RetryAfter;
 
-                    // API Time/Rate Limiting: 429 Too Many Requests (and 503 Service Unavailable) with Retry-After / X-RateLimit-* headers
-                    if ((response.StatusCode == HttpStatusCode.TooManyRequests || response.StatusCode == HttpStatusCode.ServiceUnavailable) && retriesRemaining > 0)
+                    string body = await response.Content.ReadAsStringAsync(cancel);
+                    // Parse strictly on success (a garbled success body is an error); on failure the envelope is optional.
+                    string? mediaType = response.Content.Headers.ContentType?.MediaType;
+                    JsonNode? envelope = response.IsSuccessStatusCode ? ParseEnvelope(body, mediaType) : TryParseEnvelope(body, mediaType);
+                    string? code = GetResponseCode(envelope);
+
+                    // API time/rate limiting and backend pressure: HTTP 429/503 (REST-style), or an envelope throttle code (usually with HTTP 200).
+                    // Retry-After is sent either way; X-RateLimit-Reset (seconds until the window resets) is the fallback.
+                    if (response.StatusCode == HttpStatusCode.TooManyRequests || response.StatusCode == HttpStatusCode.ServiceUnavailable || IsThrottleCode(code))
                     {
-                        TimeSpan waitDuration = GetRetryWaitDurationFromResponse(response, retryHeader, baseWaitDuration);
-                        _logger?.LogWarning("Request rate/time limited. StatusCode: {StatusCode}, backing off for {WaitTimeMs} milliseconds (Retry-After or X-RateLimit-Reset), retries remaining: {RetriesRemaining}",
-                            response.StatusCode, (int)waitDuration.TotalMilliseconds, retriesRemaining);
-                        TraceRetry(new HttpRequestException($"Server returned {response.StatusCode}.", null, response.StatusCode), _retriesToMake - retriesRemaining + 1, waitDuration);
-                        response.Dispose();
-                        await Task.Delay(waitDuration, cancel);
-                        retriesRemaining--;
-                        baseWaitDuration = TimeSpan.FromMilliseconds(baseWaitDuration.TotalMilliseconds * 2);
-                        continue;
+                        TimeSpan? serverWait = GetServerDirectedWait(response.Headers);
+                        TimeSpan waitDuration = GetThrottleWaitDuration(serverWait, baseWaitDuration);
+                        string? message = envelope?["response"]?["message"]?.ToString();
+                        if (retriesRemaining > 0 && waitDuration <= _maxServerDirectedWait)
+                        {
+                            _logger?.LogWarning("Request throttled. StatusCode: {StatusCode}, Code: {Code}, Message: {Message}, Pressure: {PressureService} {PressureLevel}, backing off for {WaitTimeMs} milliseconds, retries remaining: {RetriesRemaining}",
+                                (int)response.StatusCode, code, message, GetHeader(response.Headers, "X-Backend-Pressure-Service"), GetHeader(response.Headers, "X-Backend-Pressure-Level"),
+                                (int)waitDuration.TotalMilliseconds, retriesRemaining);
+                            ExtendThrottleWindow(waitDuration);
+                            retriesRemaining--;
+                            baseWaitDuration = TimeSpan.FromMilliseconds(baseWaitDuration.TotalMilliseconds * 2);
+                            continue;   // the throttle window is awaited at the top of the loop
+                        }
+                        ExtendThrottleWindow(waitDuration < _maxServerDirectedWait ? waitDuration : _maxServerDirectedWait);
+                        string reason = retriesRemaining > 0
+                            ? $"server asked to wait {(int)waitDuration.TotalSeconds}s, longer than the {(int)_maxServerDirectedWait.TotalSeconds}s limit"
+                            : "no retries remaining";
+                        throw new BuzzApiThrottledException(
+                            $"Buzz API request was throttled (HTTP {(int)response.StatusCode}, code {code ?? "none"}): {message} ({reason})",
+                            code, envelope, Array.Empty<int>(), serverWait, ThrottleStatusCode(response.StatusCode, code));
                     }
 
-                    if (response.StatusCode == HttpStatusCode.TooManyRequests || response.StatusCode == HttpStatusCode.ServiceUnavailable)
+                    if (response.IsSuccessStatusCode)
                     {
-                        var statusCode = response.StatusCode;
-                        response.Dispose();
-                        throw new HttpRequestException($"Server returned {statusCode} (rate/time limited). No retries remaining.", null, statusCode);
+                        ExtendThrottleWindowForThrottledItems(envelope, response.Headers);
+                        return envelope;
                     }
-                    response.EnsureSuccessStatusCode();
-                    return response;
+
+                    // A REST-style error status with an envelope (e.g. 400 BadRequest, 404 ResourceNotFound): return it so the
+                    // caller sees the server's code and message, just as it would for the same error wrapped in HTTP 200.
+                    // 401 is thrown instead so JsonRequest re-authenticates whether or not an envelope came with it.
+                    if (code is not null && !DoesStatusCodeAllowRetry(response.StatusCode) && response.StatusCode != HttpStatusCode.Unauthorized)
+                        return envelope;
+
+                    throw new HttpRequestException($"Server returned {(int)response.StatusCode} {response.ReasonPhrase}{(code is not null ? $" (code {code})" : "")}.", null, response.StatusCode);
                 }
                 // catch exceptions here but only if there are retries remaining and the exception is one that allows retries
-                catch (Exception e) when (retriesRemaining > 0 && (e is not HttpRequestException requestException || DoesStatusCodeAllowRetry(requestException.StatusCode)))
+                catch (Exception e) when (retriesRemaining > 0 && e is not BuzzApiThrottledException && (e is not HttpRequestException requestException || DoesStatusCodeAllowRetry(requestException.StatusCode)))
                 {
-                    response?.Dispose();
                     _logger?.LogTrace("Retryable exception invoking {Command} with {Method}: {ErrorType}, {ErrorMessage}", cmd, httpMethod, e.GetType(), e.Message);
                     // decide how long to wait before retrying based on any headers given by the server or if that's not there, the current base wait duration
                     TimeSpan waitDuration = GetRetryWaitDuration(retryHeader, baseWaitDuration);
@@ -452,14 +541,6 @@ namespace BuzzAPISample
 
                     retriesRemaining--;
                     baseWaitDuration = TimeSpan.FromMilliseconds(baseWaitDuration.TotalMilliseconds * 2);  // exponential back-off
-                }
-                catch
-                {
-                    // Non-retryable exception (or no retries left): dispose before propagating.
-                    // No finally here — the success path returns response to the caller who is
-                    // responsible for disposing it; a finally would dispose it prematurely.
-                    response?.Dispose();
-                    throw;
                 }
             }
         }
@@ -487,6 +568,8 @@ namespace BuzzAPISample
                     new KeyValuePair<string, string>("client_assertion",      assertion),
                 };
 
+                await WaitForThrottleWindow(cancel);
+
                 RetryConditionHeaderValue? retryHeader = null;
                 HttpResponseMessage? response = null;
                 try
@@ -495,21 +578,30 @@ namespace BuzzAPISample
                     response = await _httpClient.PostAsync(_oauthTokenEndpoint, formContent, cancel);
                     retryHeader = response.Headers.RetryAfter;
 
-                    if ((response.StatusCode == HttpStatusCode.TooManyRequests || response.StatusCode == HttpStatusCode.ServiceUnavailable) && retriesRemaining > 0)
-                    {
-                        TimeSpan wait = GetRetryWaitDurationFromResponse(response, retryHeader, baseWaitDuration);
-                        _logger?.LogWarning("OAuth token request rate-limited ({StatusCode}), backing off {WaitMs}ms, {Retries} retries remaining",
-                            response.StatusCode, (int)wait.TotalMilliseconds, retriesRemaining);
-                        response.Dispose();
-                        await Task.Delay(wait, cancel);
-                        retriesRemaining--;
-                        baseWaitDuration = TimeSpan.FromMilliseconds(baseWaitDuration.TotalMilliseconds * 2);
-                        continue;
-                    }
-
                     if (!response.IsSuccessStatusCode)
                     {
                         string body = await response.Content.ReadAsStringAsync(cancel);
+                        // The token endpoint answers with RFC 6749 errors rather than the DLAP envelope:
+                        // rate limits and backend pressure are 429/503 with error "temporarily_unavailable" and Retry-After.
+                        string? oauthError = TryParseEnvelope(body, response.Content.Headers.ContentType?.MediaType)?["error"]?.ToString();
+                        if (response.StatusCode == HttpStatusCode.TooManyRequests || response.StatusCode == HttpStatusCode.ServiceUnavailable || oauthError == "temporarily_unavailable")
+                        {
+                            TimeSpan? serverWait = GetServerDirectedWait(response.Headers);
+                            TimeSpan wait = GetThrottleWaitDuration(serverWait, baseWaitDuration);
+                            if (retriesRemaining > 0 && wait <= _maxServerDirectedWait)
+                            {
+                                _logger?.LogWarning("OAuth token request throttled ({StatusCode}, {Error}), backing off {WaitMs}ms, {Retries} retries remaining",
+                                    (int)response.StatusCode, oauthError, (int)wait.TotalMilliseconds, retriesRemaining);
+                                response.Dispose();
+                                ExtendThrottleWindow(wait);
+                                retriesRemaining--;
+                                baseWaitDuration = TimeSpan.FromMilliseconds(baseWaitDuration.TotalMilliseconds * 2);
+                                continue;   // the throttle window is awaited at the top of the loop
+                            }
+                            ExtendThrottleWindow(wait < _maxServerDirectedWait ? wait : _maxServerDirectedWait);
+                            throw new BuzzApiThrottledException($"OAuth token request was throttled ({(int)response.StatusCode}): {body}",
+                                oauthError, null, Array.Empty<int>(), serverWait, ThrottleStatusCode(response.StatusCode, null));
+                        }
                         _logger?.LogError("OAuth token request failed: {StatusCode} {Body}", response.StatusCode, body);
                         throw new HttpRequestException($"OAuth token request failed ({response.StatusCode}): {body}", null, response.StatusCode);
                     }
@@ -534,9 +626,10 @@ namespace BuzzAPISample
                     Token = accessToken;
                     _oauthTokenExpiry = DateTimeOffset.UtcNow.AddSeconds(expiresIn);
                     _logger?.LogInformation("OAuth token obtained, expires in {ExpiresIn}s", expiresIn);
+                    response.Dispose();
                     return;
                 }
-                catch (Exception e) when (retriesRemaining > 0 && (e is not HttpRequestException rex || DoesStatusCodeAllowRetry(rex.StatusCode)))
+                catch (Exception e) when (retriesRemaining > 0 && e is not BuzzApiThrottledException && (e is not HttpRequestException rex || DoesStatusCodeAllowRetry(rex.StatusCode)))
                 {
                     response?.Dispose();
                     TimeSpan wait = GetRetryWaitDuration(retryHeader, baseWaitDuration);
@@ -646,38 +739,175 @@ namespace BuzzAPISample
         }
 
         /// <summary>
-        /// Computes backoff wait duration from API rate/time limiting response headers.
-        /// Uses Retry-After first; if missing, uses X-RateLimit-Reset (seconds until window resets) per API docs.
+        /// Reads the wait the server asked for: Retry-After (delta-seconds or HTTP date) first, then
+        /// X-RateLimit-Reset, which Buzz sends as seconds until the rate-limit window resets (not a Unix time).
+        /// The server sends these on throttled responses whether the HTTP status is 200 or 429/503.
+        /// </summary>
+        /// <returns>The server-directed wait, or null if the server gave none.</returns>
+        private static TimeSpan? GetServerDirectedWait(HttpResponseHeaders headers)
+        {
+            RetryConditionHeaderValue? retryHeader = headers.RetryAfter;
+            if (retryHeader?.Delta is TimeSpan delta && delta > TimeSpan.Zero)
+                return delta;
+            if (retryHeader?.Date is DateTimeOffset date && date > DateTimeOffset.UtcNow)
+                return date - DateTimeOffset.UtcNow;
+            if (int.TryParse(GetHeader(headers, "X-RateLimit-Reset"), out int resetSecs) && resetSecs > 0)
+                return TimeSpan.FromSeconds(resetSecs);
+            return null;
+        }
+
+        /// <summary>
+        /// Computes how long to back off from a throttle: the server-directed wait if there is one (never less than the
+        /// current exponential base), otherwise exponential backoff with jitter. A server-directed wait is not capped here;
+        /// the caller compares it with <see cref="_maxServerDirectedWait"/> rather than retrying before the server said to.
         /// </summary>
         /// <returns>Duration to wait before retrying.</returns>
-        private static TimeSpan GetRetryWaitDurationFromResponse(HttpResponseMessage response, RetryConditionHeaderValue? retryHeader, TimeSpan baseWaitDuration)
+        private static TimeSpan GetThrottleWaitDuration(TimeSpan? serverWait, TimeSpan baseWaitDuration)
         {
-            int waitFromRetryAfterMs = 0;
-            if (retryHeader is not null)
-            {
-                if (retryHeader.Delta is not null)
-                    waitFromRetryAfterMs = (int)Math.Min(retryHeader.Delta.Value.TotalMilliseconds, int.MaxValue);
-                else if (retryHeader.Date is not null)
-                {
-                    double retryAfterMs = (retryHeader.Date.Value - DateTime.UtcNow).TotalMilliseconds;
-                    waitFromRetryAfterMs = (int)Math.Max(0d, Math.Min(retryAfterMs, (double)int.MaxValue));
-                }
-            }
-            if (waitFromRetryAfterMs > 0)
-            {
-                int cappedMs = Math.Max((int)baseWaitDuration.TotalMilliseconds, Math.Min((int)_maxRetryWaitDuration.TotalMilliseconds, waitFromRetryAfterMs));
-                return TimeSpan.FromMilliseconds(cappedMs);
-            }
+            if (serverWait is TimeSpan wait)
+                return wait > baseWaitDuration ? wait : baseWaitDuration;
+            return TimeSpan.FromMilliseconds(Math.Min(_maxRetryWaitDuration.TotalMilliseconds, baseWaitDuration.TotalMilliseconds + Random.Shared.Next(1, 1000)));
+        }
 
-            // X-RateLimit-Reset: seconds until the rate limit window ends (API Rate Limiting / Time Limiting docs)
-            if (response.Headers.TryGetValues("X-RateLimit-Reset", out var resetValues) && resetValues.FirstOrDefault() is string resetSecsStr && int.TryParse(resetSecsStr, out int resetSecs) && resetSecs > 0)
+        /// <summary>
+        /// The HTTP status to report for a throttle: the real one when the server sent 429/503, otherwise
+        /// the status the envelope code stands for (the server wraps these in HTTP 200 for legacy clients).
+        /// </summary>
+        private static HttpStatusCode ThrottleStatusCode(HttpStatusCode statusCode, string? code)
+        {
+            if (statusCode == HttpStatusCode.TooManyRequests || statusCode == HttpStatusCode.ServiceUnavailable)
+                return statusCode;
+            return code is "ServerOverwhelmed" or "BackendPressure" or "Service Unavailable" or "ServiceUnavailable"
+                ? HttpStatusCode.ServiceUnavailable
+                : HttpStatusCode.TooManyRequests;
+        }
+
+        private static bool IsThrottleCode(string? code) => code is not null && s_throttleCodes.Contains(code);
+
+        /// <summary>
+        /// Gets the envelope code, which is <c>response.code</c> for a normal response.
+        /// </summary>
+        private static string? GetResponseCode(JsonNode? envelope)
+        {
+            if (envelope is not JsonObject obj)
+                return null;
+            return (obj["response"] is JsonObject inner ? inner["code"] : obj["code"])?.ToString();
+        }
+
+        /// <summary>
+        /// Gets the per-item results of a batch or multi-object command (<c>responses.response</c>).
+        /// JSON always gives an array; a single item converted from XML is an object.
+        /// </summary>
+        private static List<JsonNode?> GetChildResponses(JsonNode? response)
+        {
+            JsonNode? items = response?["responses"]?["response"];
+            if (items is JsonArray array)
+                return array.ToList();
+            return items is JsonObject ? new List<JsonNode?> { items } : new List<JsonNode?>();
+        }
+
+        /// <summary>
+        /// Backs off the whole client when a successful batch or multi-object response contains throttled items,
+        /// so resubmitting them (and any other requests sharing this client) waits as the server asked.
+        /// </summary>
+        private void ExtendThrottleWindowForThrottledItems(JsonNode? envelope, HttpResponseHeaders headers)
+        {
+            JsonNode? response = envelope is JsonObject obj && obj["response"] is JsonObject inner ? inner : envelope;
+            List<JsonNode?> items = GetChildResponses(response);
+            int throttled = items.Count(i => IsThrottleCode(i?["code"]?.ToString()));
+            if (throttled == 0)
+                return;
+            TimeSpan wait = GetThrottleWaitDuration(GetServerDirectedWait(headers), _initialWaitDuration);
+            if (wait > _maxServerDirectedWait)
+                wait = _maxServerDirectedWait;
+            _logger?.LogWarning("{ThrottledCount} of {ItemCount} items in the response were throttled; backing off for {WaitTimeMs} milliseconds before the next request",
+                throttled, items.Count, (int)wait.TotalMilliseconds);
+            ExtendThrottleWindow(wait);
+        }
+
+        /// <summary>
+        /// Moves the client-wide throttle window out to at least <paramref name="wait"/> from now.
+        /// </summary>
+        private void ExtendThrottleWindow(TimeSpan wait)
+        {
+            long until = DateTime.UtcNow.Ticks + wait.Ticks;
+            long current = Interlocked.Read(ref _throttledUntilTicks);
+            while (until > current)
             {
-                int waitFromResetMs = resetSecs * 1000;
-                int cappedMs = Math.Max((int)baseWaitDuration.TotalMilliseconds, Math.Min((int)_maxRetryWaitDuration.TotalMilliseconds, waitFromResetMs));
-                return TimeSpan.FromMilliseconds(cappedMs);
+                long previous = Interlocked.CompareExchange(ref _throttledUntilTicks, until, current);
+                if (previous == current)
+                    return;
+                current = previous;
             }
-            int fallbackMs = Math.Min((int)_maxRetryWaitDuration.TotalMilliseconds, (int)baseWaitDuration.TotalMilliseconds + Random.Shared.Next(1, 1000));
-            return TimeSpan.FromMilliseconds(fallbackMs);
+        }
+
+        /// <summary>
+        /// Waits until the client-wide throttle window has passed.
+        /// </summary>
+        private async ValueTask WaitForThrottleWindow(CancellationToken cancel)
+        {
+            while (true)
+            {
+                long remainingTicks = Interlocked.Read(ref _throttledUntilTicks) - DateTime.UtcNow.Ticks;
+                if (remainingTicks <= 0)
+                    return;
+                _logger?.LogDebug("Waiting {WaitTimeMs} milliseconds for the server's throttle window to pass", (int)TimeSpan.FromTicks(remainingTicks).TotalMilliseconds);
+                await Task.Delay(TimeSpan.FromTicks(remainingTicks), cancel);
+            }
+        }
+
+        private static string? GetHeader(HttpResponseHeaders headers, string name)
+            => headers.TryGetValues(name, out IEnumerable<string>? values) ? values.FirstOrDefault() : null;
+
+        /// <summary>
+        /// Parses a response body as the XML or JSON envelope. The server returns XML unless JSON is requested,
+        /// and some error paths may ignore the Accept header, so XML is converted to the equivalent JSON shape:
+        /// attributes and child elements become properties, repeated elements become arrays, and text content becomes "$value".
+        /// </summary>
+        /// <returns>The envelope as JSON, or null for an empty body.</returns>
+        private static JsonNode? ParseEnvelope(string body, string? mediaType)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+                return null;
+            bool isXml = mediaType?.Contains("xml", StringComparison.OrdinalIgnoreCase) == true || body.TrimStart().StartsWith('<');
+            if (!isXml)
+                return JsonNode.Parse(body);
+            XElement root = XDocument.Parse(body).Root ?? throw new FormatException("XML response has no root element.");
+            return new JsonObject { [root.Name.LocalName] = XmlToJson(root) };
+        }
+
+        /// <summary>
+        /// Like <see cref="ParseEnvelope"/>, but returns null instead of throwing when the body is not XML or JSON
+        /// (for example, an HTML error page from a proxy).
+        /// </summary>
+        private static JsonNode? TryParseEnvelope(string body, string? mediaType)
+        {
+            try
+            {
+                return ParseEnvelope(body, mediaType);
+            }
+            catch (Exception e) when (e is System.Text.Json.JsonException or System.Xml.XmlException or FormatException)
+            {
+                return null;
+            }
+        }
+
+        private static JsonObject XmlToJson(XElement element)
+        {
+            JsonObject obj = new();
+            foreach (XAttribute attribute in element.Attributes().Where(a => !a.IsNamespaceDeclaration))
+                obj[attribute.Name.LocalName] = attribute.Value;
+            foreach (IGrouping<string, XElement> group in element.Elements().GroupBy(e => e.Name.LocalName))
+            {
+                List<XElement> children = group.ToList();
+                obj[group.Key] = children.Count == 1
+                    ? XmlToJson(children[0])
+                    : new JsonArray(children.Select(c => (JsonNode?)XmlToJson(c)).ToArray());
+            }
+            string text = string.Concat(element.Nodes().OfType<XText>().Select(t => t.Value));
+            if (!string.IsNullOrWhiteSpace(text))
+                obj["$value"] = text;
+            return obj;
         }
 
         /// <summary>
@@ -709,8 +939,10 @@ namespace BuzzAPISample
                     HttpStatusCode.Unauthorized or
                     HttpStatusCode.PaymentRequired or
                     HttpStatusCode.Forbidden or
+                    HttpStatusCode.NotFound or
                     HttpStatusCode.MethodNotAllowed or
                     HttpStatusCode.NotAcceptable or HttpStatusCode.ProxyAuthenticationRequired or
+                    HttpStatusCode.Conflict or
                     HttpStatusCode.Gone or
                     HttpStatusCode.LengthRequired or
                     HttpStatusCode.PreconditionFailed or
