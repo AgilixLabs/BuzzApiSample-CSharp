@@ -45,7 +45,8 @@ XML/JSON response envelope (`response.code`). REST-style endpoints use real HTTP
 
 - **Detection** — a request counts as throttled if the HTTP status is 429 or 503, *or* the envelope
   code is one of `TimeLimit`, `RateLimit`, `BackendPressure`, `ServerOverwhelmed`, `RetryLater`,
-  `LimitExceeded` or `TooManyRequests`. XML responses are parsed as well as JSON.
+  `LimitExceeded`, `TooManyRequests`, or `Service Unavailable` / `ServiceUnavailable` (sent when the
+  server sheds load before authentication). XML responses are parsed as well as JSON.
 - **How long to wait** — `Retry-After` (sent even with HTTP 200), then `X-RateLimit-Reset`
   (seconds until the window resets), then exponential backoff with jitter. The client waits as long
   as the server asks, up to 10 minutes. If the server asks for longer, the request fails straight away

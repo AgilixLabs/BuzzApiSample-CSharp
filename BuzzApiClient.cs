@@ -530,8 +530,11 @@ namespace BuzzAPISample
 
                     throw new HttpRequestException($"Server returned {(int)response.StatusCode} {response.ReasonPhrase}{(code is not null ? $" (code {code})" : "")}.", null, response.StatusCode);
                 }
-                // catch exceptions here but only if there are retries remaining and the exception is one that allows retries
-                catch (Exception e) when (retriesRemaining > 0 && e is not BuzzApiThrottledException && (e is not HttpRequestException requestException || DoesStatusCodeAllowRetry(requestException.StatusCode)))
+                // catch exceptions here but only if there are retries remaining and the exception is one that allows retries.
+                // A success body that fails to parse is not retried: the server already ran the command, and resending
+                // a mutation (or a batch) could repeat it.
+                catch (Exception e) when (retriesRemaining > 0 && e is not BuzzApiThrottledException && !IsParseException(e)
+                    && (e is not HttpRequestException requestException || DoesStatusCodeAllowRetry(requestException.StatusCode)))
                 {
                     _logger?.LogTrace("Retryable exception invoking {Command} with {Method}: {ErrorType}, {ErrorMessage}", cmd, httpMethod, e.GetType(), e.Message);
                     // decide how long to wait before retrying based on any headers given by the server or if that's not there, the current base wait duration
@@ -813,17 +816,22 @@ namespace BuzzAPISample
         private void ExtendThrottleWindowForThrottledItems(JsonNode? envelope, HttpResponseHeaders headers)
         {
             JsonNode? response = envelope is JsonObject obj && obj["response"] is JsonObject inner ? inner : envelope;
-            List<JsonNode?> items = GetChildResponses(response);
-            int throttled = items.Count(i => IsThrottleCode(i?["code"]?.ToString()));
+            int throttled = CountThrottledItems(response);
             if (throttled == 0)
                 return;
             TimeSpan wait = GetThrottleWaitDuration(GetServerDirectedWait(headers), _initialWaitDuration);
             if (wait > _maxServerDirectedWait)
                 wait = _maxServerDirectedWait;
-            _logger?.LogWarning("{ThrottledCount} of {ItemCount} items in the response were throttled; backing off for {WaitTimeMs} milliseconds before the next request",
-                throttled, items.Count, (int)wait.TotalMilliseconds);
+            _logger?.LogWarning("{ThrottledCount} items in the response were throttled; backing off for {WaitTimeMs} milliseconds before the next request",
+                throttled, (int)wait.TotalMilliseconds);
             ExtendThrottleWindow(wait);
         }
+
+        /// <summary>
+        /// Counts throttled items at any depth, since a batch item can itself be a multi-object command with per-row results.
+        /// </summary>
+        private static int CountThrottledItems(JsonNode? response)
+            => GetChildResponses(response).Sum(item => (IsThrottleCode(item?["code"]?.ToString()) ? 1 : 0) + CountThrottledItems(item));
 
         /// <summary>
         /// Moves the client-wide throttle window out to at least <paramref name="wait"/> from now.
@@ -886,11 +894,13 @@ namespace BuzzAPISample
             {
                 return ParseEnvelope(body, mediaType);
             }
-            catch (Exception e) when (e is System.Text.Json.JsonException or System.Xml.XmlException or FormatException)
+            catch (Exception e) when (IsParseException(e))
             {
                 return null;
             }
         }
+
+        private static bool IsParseException(Exception e) => e is System.Text.Json.JsonException or System.Xml.XmlException or FormatException;
 
         private static JsonObject XmlToJson(XElement element)
         {
