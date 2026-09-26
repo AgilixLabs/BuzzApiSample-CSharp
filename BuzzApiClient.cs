@@ -40,6 +40,15 @@ namespace BuzzAPISample
         };
 
         /// <summary>
+        /// The throttle codes that mean the server or a backend is overloaded (reported as 503) rather than
+        /// that the caller exceeded a rate or time limit (reported as 429). Matched case-insensitively, like <see cref="s_throttleCodes"/>.
+        /// </summary>
+        private static readonly HashSet<string> s_overloadCodes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "ServerOverwhelmed", "BackendPressure", "Service Unavailable", "ServiceUnavailable",
+        };
+
+        /// <summary>
         /// UTC ticks before which no request from this client should be sent. Set whenever the server signals
         /// throttling or backend pressure, so concurrent requests sharing this client back off together
         /// instead of each discovering the throttle separately.
@@ -780,7 +789,7 @@ namespace BuzzAPISample
         {
             if (statusCode == HttpStatusCode.TooManyRequests || statusCode == HttpStatusCode.ServiceUnavailable)
                 return statusCode;
-            return code is "ServerOverwhelmed" or "BackendPressure" or "Service Unavailable" or "ServiceUnavailable"
+            return code is not null && s_overloadCodes.Contains(code)
                 ? HttpStatusCode.ServiceUnavailable
                 : HttpStatusCode.TooManyRequests;
         }
