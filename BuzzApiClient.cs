@@ -561,8 +561,10 @@ namespace BuzzAPISample
             TimeSpan baseWaitDuration = _initialWaitDuration;
             while (true)
             {
-                // Build a fresh assertion on every attempt: JWTs expire in 2 minutes and a
-                // long Retry-After backoff can push a reused assertion past its exp claim.
+                // Wait out any throttle window first, then build a fresh assertion on every attempt:
+                // JWTs expire in 2 minutes and a throttle wait can be up to 10, so an assertion built
+                // before the wait (or reused from an earlier attempt) could be past its exp claim.
+                await WaitForThrottleWindow(cancel);
                 string assertion = BuildClientAssertion(_oauthRsa!, _oauthUserId, _oauthKid, _oauthTokenEndpoint);
                 var formFields = new[]
                 {
@@ -570,8 +572,6 @@ namespace BuzzAPISample
                     new KeyValuePair<string, string>("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
                     new KeyValuePair<string, string>("client_assertion",      assertion),
                 };
-
-                await WaitForThrottleWindow(cancel);
 
                 RetryConditionHeaderValue? retryHeader = null;
                 HttpResponseMessage? response = null;
