@@ -255,6 +255,43 @@ function Get-BuzzLoginHint([string] $code) {
     }
 }
 
+# The original, single API endpoint (api.agilixbuzz.com) is deprecated for integrations:
+# Buzz refuses it (code "ApiDeprecated") for users and domains created after the
+# deprecation was enforced.  Refuse it here, before asking for a password.
+# BuzzApiClient.CheckServerUrl makes the same check.
+#   https://interactiveapi.agilixbuzz.com/docs/entry/Concept/ApiDeprecation.md
+function Assert-BuzzServerUrl([string] $url) {
+    $u = "$url".Trim().TrimEnd('/')
+    if ($u -notmatch '://') { $u = "https://$u" }
+    $parsed = $null
+    if ([uri]::TryCreate($u, [UriKind]::Absolute, [ref] $parsed) -and $parsed.Host -eq 'api.agilixbuzz.com') {
+        Write-Host ""
+        Write-Host "  api.agilixbuzz.com is deprecated for API integrations, and Buzz refuses it for new users and domains. Use the background endpoint (https://backgroundapi.agilixbuzz.com) for background processing, or the interactive endpoint (https://interactiveapi.agilixbuzz.com) for requests a user is waiting on. See 'API Deprecation' and 'API Time Limiting' in the Buzz API documentation." -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Buzz refuses a deprecated endpoint host name, command or sign-in for new users and
+# domains with the code ApiDeprecated, on the response or on an item within it.  Trying
+# again cannot help, so stop and show the server's message, which says what to use instead.
+function Stop-IfBuzzDeprecated([psobject] $response) {
+    $message = $null
+    if ((Get-BuzzCode $response) -eq 'ApiDeprecated') {
+        $inner = Get-BuzzProp $response 'response'
+        if ($null -eq $inner) { $inner = $response }
+        $message = Get-BuzzProp $inner 'message'
+    } else {
+        $item = Get-BuzzProp (Get-BuzzProp (Get-BuzzProp $response 'response') 'responses') 'response'
+        if ($item -is [array]) { $item = if ($item.Count -gt 0) { $item[0] } else { $null } }
+        if ((Get-BuzzProp $item 'code') -ne 'ApiDeprecated') { return }
+        $message = Get-BuzzProp $item 'message'
+    }
+    if ([string]::IsNullOrEmpty($message)) { $message = "Buzz refused this request because it uses a deprecated API." }
+    Write-Host ""
+    Write-Host "  $message" -ForegroundColor Red
+    exit 1
+}
+
 # ── Step 1: Server URL ────────────────────────────────────────────────────────
 # backgroundapi is the host intended for server-to-server integrations like this one.
 $defaultServerUrl = "https://backgroundapi.agilixbuzz.com"
@@ -268,6 +305,7 @@ if ([string]::IsNullOrEmpty($ServerUrl)) {
     throw "Server URL is required."
 }
 $ServerUrl = $ServerUrl.TrimEnd('/')
+Assert-BuzzServerUrl $ServerUrl
 Write-Host "  Server: $ServerUrl" -ForegroundColor Green
 Write-Host ""
 
@@ -329,8 +367,8 @@ while ($null -eq $adminToken) {
     # account has MFA configured.  The token it returns alongside that code is a
     # short-lived token good only for secondfactorauthenticate, which returns the
     # real session token.  See:
-    #   https://api.agilixbuzz.com/docs/entry/Command/Login3.md
-    #   https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
+    #   https://interactiveapi.agilixbuzz.com/docs/entry/Command/Login3.md
+    #   https://interactiveapi.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
     if ($loginCode -eq "SecondFactorConfigurationNowRequired") {
         Write-Host ""
         Write-Host "  This account must configure multi-factor authentication before it can" -ForegroundColor Red
@@ -394,6 +432,8 @@ while ($null -eq $adminToken) {
         $mfaBody = $null
         $loginCode = Get-BuzzCode $loginResult
     }
+
+    Stop-IfBuzzDeprecated $loginResult
 
     if ($loginCode -ne "OK") {
         Write-Host ""
@@ -494,11 +534,12 @@ if ($createNew -eq "Y") {
         # failed, silently falling through to the manual domain-ID prompt below.
         # domainid=0 means "every domain this account has ReadDomain rights on";
         # limit=0 lifts the default 100-domain cap (capped server-side at 1000 for
-        # domainid=0).  https://api.agilixbuzz.com/docs/entry/Command/ListDomains.md
+        # domainid=0).  https://interactiveapi.agilixbuzz.com/docs/entry/Command/ListDomains.md
         $domainsResult = Invoke-RestMethod @_bp `
             -Uri             "$ServerUrl/cmd/listdomains?domainid=0&limit=0" `
             -Method          Get `
             -Headers         @{ Accept = "application/json"; Authorization = "Bearer $adminToken" }
+        Stop-IfBuzzDeprecated $domainsResult
         Write-Host " done" -ForegroundColor Green
 
         $domains = @()
@@ -593,6 +634,8 @@ if ($createNew -eq "Y") {
         Write-Host ""
         throw "CreateUsers2 request failed: $_"
     }
+
+    Stop-IfBuzzDeprecated $createResult
 
     $createCode = Get-BuzzCode $createResult
     if ($createCode -ne "OK") {

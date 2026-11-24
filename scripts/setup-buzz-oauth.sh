@@ -453,6 +453,39 @@ buzz_get() {
     printf '%s' "$result"
 }
 
+# The original, single API endpoint (api.agilixbuzz.com) is deprecated for integrations:
+# Buzz refuses it (code "ApiDeprecated") for users and domains created after the
+# deprecation was enforced.  Refuse it here, before asking for a password.
+# BuzzApiClient.CheckServerUrl makes the same check.
+#   https://interactiveapi.agilixbuzz.com/docs/entry/Concept/ApiDeprecation.md
+check_server_url() {
+    local host="$1"
+    case "$host" in *://*) host="${host#*://}" ;; esac   # scheme
+    host="${host%%[/?#]*}"                               # path, query, fragment
+    host="${host##*@}"                                   # user info
+    host="${host%%:*}"                                   # port
+    host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+    if [ "$host" = "api.agilixbuzz.com" ]; then
+        printf '\nError: %s\n' "api.agilixbuzz.com is deprecated for API integrations, and Buzz refuses it for new users and domains. Use the background endpoint (https://backgroundapi.agilixbuzz.com) for background processing, or the interactive endpoint (https://interactiveapi.agilixbuzz.com) for requests a user is waiting on. See 'API Deprecation' and 'API Time Limiting' in the Buzz API documentation." >&2
+        exit 1
+    fi
+}
+
+# Buzz refuses a deprecated endpoint host name, command or sign-in for new users and
+# domains with the code ApiDeprecated, on the response or on an item within it.  Trying
+# again cannot help, so stop and show the server's message, which says what to use instead.
+stop_if_deprecated() {
+    local response="$1" msg=""
+    if [ "$(buzz_get_field "$response" code)" = "ApiDeprecated" ]; then
+        msg="$(buzz_get_field "$response" message)"
+    elif [ "$(buzz_get_field "$response" item_code)" = "ApiDeprecated" ]; then
+        msg="$(buzz_get_field "$response" item_message)"
+    else
+        return 0
+    fi
+    die "${msg:-Buzz refused this request because it uses a deprecated API.}"
+}
+
 # ── Banner ────────────────────────────────────────────────────────────────────
 printf '\n'
 printf '\033[1;36m══════════════════════════════════════════════════════════\033[0m\n'
@@ -470,6 +503,7 @@ if [ -z "$SERVER_URL" ]; then
     prompt_required "Buzz API server URL" SERVER_URL "https://backgroundapi.agilixbuzz.com"
 fi
 SERVER_URL="${SERVER_URL%/}"  # strip trailing slash
+check_server_url "$SERVER_URL"
 ok "  Server: $SERVER_URL"
 
 # ── Step 2: Admin login ───────────────────────────────────────────────────────
@@ -516,8 +550,8 @@ sys.stdout.write(json.dumps({"request": {"cmd": "login3", "username": u, "passwo
     # account has MFA configured.  The token returned alongside that code is a
     # short-lived token good only for secondfactorauthenticate, which returns the
     # real session token.  See:
-    #   https://api.agilixbuzz.com/docs/entry/Command/Login3.md
-    #   https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
+    #   https://interactiveapi.agilixbuzz.com/docs/entry/Command/Login3.md
+    #   https://interactiveapi.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
     if [ "$LOGIN_CODE" = "SecondFactorConfigurationNowRequired" ]; then
         printf '\n  This account must configure multi-factor authentication before it can\n'
         printf '  be used.  Sign in to Buzz with this account, complete the MFA setup,\n'
@@ -564,6 +598,8 @@ sys.stdout.write(json.dumps({"request": {"cmd": "secondfactorauthenticate", "otp
 
         LOGIN_CODE=$(buzz_get_field "$LOGIN_RESPONSE" code)
     fi
+
+    stop_if_deprecated "$LOGIN_RESPONSE"
 
     if [ "$LOGIN_CODE" != "OK" ]; then
         LOGIN_MSG=$(buzz_get_field "$LOGIN_RESPONSE" message)
@@ -670,10 +706,11 @@ if printf '%s' "$CREATE_NEW" | grep -qiE '^y'; then
     # failed, silently falling through to the manual domain-ID prompt below.
     # domainid=0 means "every domain this account has ReadDomain rights on";
     # limit=0 lifts the default 100-domain cap (capped server-side at 1000 for
-    # domainid=0).  https://api.agilixbuzz.com/docs/entry/Command/ListDomains.md
+    # domainid=0).  https://interactiveapi.agilixbuzz.com/docs/entry/Command/ListDomains.md
     printf 'Fetching available domains...'
     DOMAINS_RESPONSE=$(buzz_get "listdomains" "domainid=0&limit=0" "$ADMIN_TOKEN" 2>/dev/null || true)
     DOMAIN_CODE=$(buzz_get_field "$DOMAINS_RESPONSE" code)
+    stop_if_deprecated "$DOMAINS_RESPONSE"
 
     if [ "$DOMAIN_CODE" = "OK" ]; then
         printf ' done\n\n'
@@ -786,6 +823,7 @@ PYEOF
 
     CREATE_RESPONSE=$(buzz_post "createusers2" "$CREATE_BODY" "$ADMIN_TOKEN")
     CREATE_CODE=$(buzz_get_field "$CREATE_RESPONSE" code)
+    stop_if_deprecated "$CREATE_RESPONSE"
 
     if [ "$CREATE_CODE" != "OK" ]; then
         printf '\n'

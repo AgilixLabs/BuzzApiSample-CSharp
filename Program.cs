@@ -7,6 +7,11 @@ namespace BuzzAPISample
 {
     class Program
     {
+        // Replace YOUR_APPLICATION_NAME with your application's name and version, such as "AcmeRosterSync/1.0".
+        // It is how Agilix support identifies your integration.  Do not include the word "Buzz": a User-Agent
+        // containing it is treated as one of Agilix's own applications.
+        const string ApplicationName = YOUR_APPLICATION_NAME;
+
         static async Task Main()
         {
             /* CONFIGURATION
@@ -43,7 +48,7 @@ namespace BuzzAPISample
                     "No private key source in buzz-config.json. " +
                     "Run the setup script or see README.md.");
 
-            string userAgent = $"BuzzApiClient/1.0.0 (CSharp; {applicationInformation}; {contactInformation})";
+            string userAgent = $"{ApplicationName} (CSharp; {applicationInformation}; {contactInformation})";
 
             using ILoggerFactory loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
             ILogger<BuzzApiClient> logger = loggerFactory.CreateLogger<BuzzApiClient>();

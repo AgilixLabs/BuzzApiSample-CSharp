@@ -166,8 +166,12 @@ PYEOF
 )
 fi
 
+# Run under a temporary application name so the quick start works before Program.cs is named.  The
+# name reaches this build only, through the SampleApplicationName property (see BuzzAPISample.csproj);
+# Program.cs is never edited.  Set your own name there before using the code anywhere else.
+QUICK_START_NAME='QuickStartSample/1.0'
 if [ -n "$FRAMEWORK" ]; then
-    dotnet run --framework "$FRAMEWORK"
+    dotnet run --framework "$FRAMEWORK" --property:SampleApplicationName="$QUICK_START_NAME"
 else
-    dotnet run
+    dotnet run --property:SampleApplicationName="$QUICK_START_NAME"
 fi

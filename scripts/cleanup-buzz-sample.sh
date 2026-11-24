@@ -240,6 +240,26 @@ if [ -z "$SERVER_URL" ] || [ -z "$OAUTH_USER_ID" ]; then
     exit 1
 fi
 
+# The original, single API endpoint (api.agilixbuzz.com) is deprecated for integrations:
+# Buzz refuses it (code "ApiDeprecated") for users and domains created after the
+# deprecation was enforced.  Refuse it here, before asking for a password.
+# BuzzApiClient.CheckServerUrl makes the same check.
+#   https://interactiveapi.agilixbuzz.com/docs/entry/Concept/ApiDeprecation.md
+check_server_url() {
+    local host="$1"
+    case "$host" in *://*) host="${host#*://}" ;; esac   # scheme
+    host="${host%%[/?#]*}"                               # path, query, fragment
+    host="${host##*@}"                                   # user info
+    host="${host%%:*}"                                   # port
+    host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+    if [ "$host" = "api.agilixbuzz.com" ]; then
+        printf '\nError: %s\n' "api.agilixbuzz.com is deprecated for API integrations, and Buzz refuses it for new users and domains. Use the background endpoint (https://backgroundapi.agilixbuzz.com) for background processing, or the interactive endpoint (https://interactiveapi.agilixbuzz.com) for requests a user is waiting on. See 'API Deprecation' and 'API Time Limiting' in the Buzz API documentation." >&2
+        printf 'Change serverUrl in buzz-config.json, then re-run this script.\n' >&2
+        exit 1
+    fi
+}
+check_server_url "$SERVER_URL"
+
 # ── Cert store path ───────────────────────────────────────────────────────────
 if [ "$STORE_LOCATION_STR" = "LocalMachine" ]; then
     STORE_DIR="/etc/dotnet/corefx/cryptography/x509stores/my"
@@ -327,7 +347,7 @@ print(json.dumps(body), end='')
     # login3 answers SecondFactorRequired when the password was right but the account
     # has MFA configured, returning a short-lived token good only for
     # secondfactorauthenticate.  That call returns the real session token.
-    #   https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
+    #   https://interactiveapi.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
     if [ "$login_code" = "SecondFactorConfigurationNowRequired" ]; then
         printf '\n  This account must configure multi-factor authentication before it can\n'
         printf '  be used.  Complete MFA setup in Buzz, then re-run this script.\n'
@@ -385,6 +405,14 @@ print(json.dumps(body), end="")
         fi
 
         login_code="$(buzz_get_field "$login_response" code)"
+    fi
+
+    # Buzz refuses a deprecated endpoint host name or sign-in for new users and
+    # domains.  Trying again cannot help, so stop and show what to use instead.
+    if [ "$login_code" = "ApiDeprecated" ]; then
+        login_msg="$(buzz_get_field "$login_response" message)"
+        printf '\nError: %s\n' "${login_msg:-Buzz refused this request because it uses a deprecated API.}" >&2
+        exit 1
     fi
 
     if [ "$login_code" != "OK" ]; then

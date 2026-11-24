@@ -13,9 +13,6 @@ An RSA private key signs a short-lived JWT assertion; Buzz verifies the signatur
 registered public key and returns a Bearer access token valid for one hour.  The private key
 never leaves your system — there is no shared secret to intercept.
 
-The legacy username/password (`login3`) flow is still supported for backward compatibility but
-is not recommended for new integrations.
-
 ---
 
 ## Overview
@@ -60,9 +57,35 @@ XML/JSON response envelope (`response.code`). REST-style endpoints use real HTTP
   `HttpRequestException`. Its `StatusCode` is 429 or 503 even when the server sent HTTP 200.
   `Code` and `RetryAfter` are also set.
 
+### Endpoints and deprecations
+
+Use `https://backgroundapi.agilixbuzz.com` for background processing (the default here), or the
+interactive endpoint (`https://interactiveapi.agilixbuzz.com`) for requests a user is waiting on.
+**Do not use `api.agilixbuzz.com`**: it is deprecated for integrations, Buzz refuses it for new
+users and domains, and `BuzzApiClient` and the setup scripts refuse it up front with a message
+saying what to use instead.  `BuzzApiClient.CheckServerUrl` makes the same check on a `serverUrl`
+read from your own configuration.
+
+Buzz retires deprecated parts of its API for users and domains created after each deprecation is
+enforced, and answers such a request with the code `ApiDeprecated` and a message naming the
+replacement.  That covers obsolete commands (for example `GetUser`, replaced by `GetUser2`), the
+`api.agilixbuzz.com` endpoint, and using a password (`Login3`) session for integration work.
+`BuzzApiClient` throws `BuzzApiDeprecatedException` for it and never retries.  This sample already
+uses only what is supported: OAuth for every API call, and `Login3` only in the setup and cleanup
+scripts, for the brief administrator sign-in that creates the Application Identity account.  See
+[API Deprecation](https://interactiveapi.agilixbuzz.com/docs/entry/Concept/ApiDeprecation.md) in the
+Buzz API documentation.
+
 ---
 
 ## Quickest Start
+
+**First, name your application.** Set `YOUR_APPLICATION_NAME` in `Program.cs` to your application's
+name and version, such as `AcmeRosterSync/1.0`; until you do, the sample does not build when run on
+its own. It goes in the User-Agent header, where Agilix support uses it to identify your
+integration. Do not include the word "Buzz": a User-Agent containing it is treated as one of
+Agilix's own applications. The quick start below runs the sample under a temporary name for you,
+without changing that file; set your own before using the code anywhere else.
 
 ### Run (setup + demo in one command)
 
@@ -341,21 +364,6 @@ BuzzApiClient client = new(
     privateKey:  rsa);
 ```
 
-### Legacy password login (not recommended for new integrations)
-
-```csharp
-BuzzApiClient client = new(
-    serverUrl: "https://backgroundapi.agilixbuzz.com",
-    userAgent: "MyApp/1.0 (CSharp; MyApp; admin@example.com)",
-    userspace: "myschool",
-    username:  "admin",
-    password:  "secret");
-
-// domainid=0 lists every domain this account has ReadDomain rights on.
-JsonNode response = client.VerifyResponse(
-    await client.JsonRequest(HttpMethod.Get, "listdomains", "domainid=0"));
-```
-
 ---
 
 ## Key Management
@@ -425,10 +433,12 @@ regional host) to override.
 
 The Buzz API documentation recommends using this background/batch server URL for long-running
 integrations to avoid the time limits that apply to interactive API calls — which is exactly
-what an OAuth Application Identity integration is.  `https://api.agilixbuzz.com` is the
-interactive host and is better suited to user-facing traffic.
+what an OAuth Application Identity integration is.  `https://interactiveapi.agilixbuzz.com`
+is the interactive host and is better suited to user-facing traffic.  The client and the setup
+scripts refuse the deprecated `api.agilixbuzz.com` (see
+[Endpoints and deprecations](#endpoints-and-deprecations)).
 
-See [API Time Limiting](https://api.agilixbuzz.com/docs/#!/Concept/ApiTimeLimiting) for guidance
+See [API Time Limiting](https://interactiveapi.agilixbuzz.com/docs/#!/Concept/ApiTimeLimiting) for guidance
 on choosing the correct server URL for your use case.
 
 ---
@@ -443,6 +453,7 @@ on choosing the correct server URL for your use case.
 | `invalid_client: No application identity account found for the specified 'sub'.` | The `oauthUserId` is not an Application Identity account. | Recreate the account with `type=applicationidentity`. |
 | HTTP 400 on `Register-BuzzOAuthKey.ps1` | Wrong PEM format or key too small. | Regenerate with `New-BuzzOAuthKey.ps1`, which writes a SubjectPublicKeyInfo PEM (starts with `-----BEGIN PUBLIC KEY-----`). Minimum key size is 2048 bits. |
 | HTTP 401/403 on `Register-BuzzOAuthKey.ps1` | Admin token lacks Update User rights on the account. | Use an admin token for an account with the Update User right in the relevant domain. |
+| `BuzzApiDeprecatedException` / `ApiDeprecated` / `unauthorized_client` | The request used a deprecated command or the `api.agilixbuzz.com` endpoint, and the user or domain is too new to be allowed it. | Do what the message says: switch to the named replacement or endpoint. Do not retry. |
 
 ### Multi-factor authentication
 
@@ -450,12 +461,12 @@ MFA affects only the **administrator login** that `Setup-BuzzOAuth.ps1` and
 `Cleanup-BuzzSample.ps1` use to create the Application Identity account and register its
 key.  It does **not** affect the sample or your integration.
 
-An [Application Identity account](https://api.agilixbuzz.com/docs/entry/Concept/OAuth.md)
+An [Application Identity account](https://interactiveapi.agilixbuzz.com/docs/entry/Concept/OAuth.md)
 authenticates with a signed JWT assertion instead of a password, and cannot be logged into
 interactively at all.  The API reference makes the consequence explicit: OAuth *"works in
 domains where MFA is required for administrative accounts, since it authenticates via
 signed JWT assertions rather than a username and password"*
-([Login3](https://api.agilixbuzz.com/docs/entry/Command/Login3.md)).  So an integration
+([Login3](https://interactiveapi.agilixbuzz.com/docs/entry/Command/Login3.md)).  So an integration
 built on this sample keeps running unattended in a domain that requires MFA of every
 administrator — which is a large part of why OAuth is preferred over the legacy `login3`
 flow.
@@ -463,7 +474,7 @@ flow.
 When the admin account does have a second factor, `login3` answers `SecondFactorRequired`
 and returns a short-lived token.  The script prompts for the one-time code and presents
 both to
-[`secondfactorauthenticate`](https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md),
+[`secondfactorauthenticate`](https://interactiveapi.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md),
 which returns the real session token.  That short-lived token is sent in an
 `Authorization: Bearer` header — it is ignored if placed in the request body.
 
@@ -477,3 +488,9 @@ which returns the real session token.  That short-lived token is sent in an
 | `AccountLockout` | Too many failed password attempts. | An administrator must unlock the account. |
 | `PasswordExpired` | The password expired under the domain's password policy. | Change the password in Buzz, then re-run the script. |
 | `LoginMethodNotAllowed` | The account does not permit password login (SSO-only, for example). | Use a different admin account for setup. |
+| `ApiDeprecated` | The server URL is a deprecated endpoint (`api.agilixbuzz.com`) and the account or its domain is too new to use it. | Re-run with `https://backgroundapi.agilixbuzz.com` as the server URL. |
+
+## Maintainers
+
+`pwsh -File scripts/Test-BuzzSample.ps1` builds and tests the sample under a placeholder
+application name without changing the entry point (see the script header for why).

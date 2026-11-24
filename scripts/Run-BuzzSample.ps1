@@ -183,10 +183,14 @@ try {
             $framework = $nets
         }
     }
+    # Run under a temporary application name so the quick start works before Program.cs is named.  The
+    # name reaches this build only, through the SampleApplicationName property (see BuzzAPISample.csproj);
+    # Program.cs is never edited.  Set your own name there before using the code anywhere else.
+    $quickStartName = 'QuickStartSample/1.0'
     if ($framework) {
-        dotnet run --framework $framework
+        dotnet run --framework $framework "--property:SampleApplicationName=$quickStartName"
     } else {
-        dotnet run
+        dotnet run "--property:SampleApplicationName=$quickStartName"
     }
 } finally {
     Pop-Location

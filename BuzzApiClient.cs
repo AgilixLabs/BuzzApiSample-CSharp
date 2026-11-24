@@ -11,7 +11,7 @@ namespace BuzzAPISample
 {
     /// <summary>
     /// Makes requests to a Buzz API server.
-    /// Supports OAuth 2.0 JWT client credentials (RFC 6749 + RFC 7523) and legacy password-based login.
+    /// Authenticates with OAuth 2.0 JWT client credentials (RFC 6749 + RFC 7523).
     /// </summary>
     public class BuzzApiClient : IDisposable
     {
@@ -47,6 +47,23 @@ namespace BuzzAPISample
         {
             "ServerOverwhelmed", "BackendPressure", "Service Unavailable", "ServiceUnavailable",
         };
+
+        /// <summary>
+        /// The original, single API endpoint. It is deprecated for integrations: Buzz refuses it (code "ApiDeprecated")
+        /// for users and domains created after the deprecation was enforced. Use the background endpoint for background
+        /// processing, or the interactive endpoint for requests a user is waiting on.
+        ///   https://interactiveapi.agilixbuzz.com/docs/entry/Concept/ApiDeprecation.md
+        /// </summary>
+        public static readonly IReadOnlySet<string> LegacyApiHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "api.agilixbuzz.com",
+        };
+
+        /// <summary>
+        /// The response code Buzz gives a request that used a deprecated command, endpoint host name or kind of sign-in.
+        /// It is never worth retrying.
+        /// </summary>
+        private const string _deprecatedCode = "ApiDeprecated";
 
         /// <summary>
         /// UTC ticks before which no request from this client should be sent. Set whenever the server signals
@@ -87,103 +104,41 @@ namespace BuzzAPISample
         public int Timeout { get; private set; }
 
         /// <summary>
-        /// The authentication token for API requests (Bearer token for OAuth, session token for password login)
+        /// The OAuth Bearer access token for API requests
         /// </summary>
         public string? Token { get; private set; }
 
         private readonly HttpClient _httpClient;
 
-        // Password-based auto-login
-        private readonly bool _autoLoginEnabled;
-        private readonly string _autoLoginUserspace;
-        private readonly string _autoLoginUsername;
-        private readonly string _autoLoginPassword;
-
         // OAuth 2.0 (RFC 7523 JWT client credentials)
-        private readonly bool _oauthEnabled;
         private readonly string _oauthUserId;
         private readonly string _oauthKid;
-        private readonly RSA? _oauthRsa;
+        private readonly RSA _oauthRsa;
         private readonly string _oauthTokenEndpoint;
         private DateTimeOffset _oauthTokenExpiry;
         private readonly SemaphoreSlim _oauthTokenLock = new(1, 1);
 
         /// <summary>
-        /// Create a BuzzApiClient.
-        /// Call <see cref="Login(string, string, string, CancellationToken)"/> before making authenticated requests,
-        /// or use the OAuth or auto-login constructor overloads instead.
+        /// Returns <paramref name="serverUrl"/> trimmed, refusing a deprecated endpoint host name.
+        /// Called by the constructor; public so configuration code can make the same check early.
         /// </summary>
-        /// <param name="logger">An <see cref="ILogger{TCategoryName}"/> to use for logging.</param>
-        /// <param name="serverUrl">The URL of the server, including the protocol, and excluding trailing '/'</param>
-        /// <param name="userAgent">The user agent to send on requests</param>
-        /// <param name="verbose">Include verbose logging</param>
-        /// <param name="timeout">Timeout in milliseconds for requests</param>
-        public BuzzApiClient(ILogger<BuzzApiClient>? logger, string serverUrl, string userAgent, bool verbose = false, int timeout = 600000)
+        /// <param name="serverUrl">The URL of the server, including the protocol</param>
+        /// <returns>The URL without surrounding whitespace or trailing '/'</returns>
+        /// <exception cref="ArgumentException">The URL names a host in <see cref="LegacyApiHosts"/>.</exception>
+        public static string CheckServerUrl(string serverUrl)
         {
-            _logger = logger;
-
-            serverUrl = serverUrl.Trim().TrimEnd('/');
-            ServerUrl = serverUrl;
-            UserAgent = userAgent;
-            Verbose = verbose;
-            Timeout = timeout;
-
-            _httpClient = new();
-            _httpClient.DefaultRequestHeaders.Add("User-Agent", UserAgent);
-            _httpClient.Timeout = TimeSpan.FromMilliseconds(Timeout);
-
-            _autoLoginEnabled = false;
-            _autoLoginUserspace = string.Empty;
-            _autoLoginUsername = string.Empty;
-            _autoLoginPassword = string.Empty;
-
-            _oauthEnabled = false;
-            _oauthUserId = string.Empty;
-            _oauthKid = string.Empty;
-            _oauthRsa = null;
-            _oauthTokenEndpoint = string.Empty;
-        }
-
-        /// <summary>
-        /// Create a BuzzApiClient that automatically logs in with a username and password,
-        /// and re-logs in if the session expires.
-        /// </summary>
-        /// <param name="serverUrl">The URL of the server, including the protocol, and excluding trailing '/'</param>
-        /// <param name="userAgent">The user agent to send on requests</param>
-        /// <param name="userspace">The userspace of the domain where the login user resides</param>
-        /// <param name="username">The user's username</param>
-        /// <param name="password">The user's password</param>
-        /// <param name="verbose">Include verbose logging</param>
-        /// <param name="timeout">Timeout in milliseconds for requests</param>
-        public BuzzApiClient(string serverUrl, string userAgent, string userspace, string username, string password,
-            bool verbose = false, int timeout = 600000)
-        {
-            if (string.IsNullOrEmpty(userspace) || string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
+            string url = (serverUrl ?? string.Empty).Trim().TrimEnd('/');
+            // A URL given without a scheme is still checked, by reading it as https
+            string host = Uri.TryCreate(url.Contains("://") ? url : $"https://{url}", UriKind.Absolute, out Uri? uri) ? uri.Host.ToLowerInvariant() : string.Empty;
+            if (LegacyApiHosts.Contains(host))
             {
-                throw new Exception("userspace, username, and password are required for auto login");
+                throw new ArgumentException(
+                    $"{host} is deprecated for API integrations, and Buzz refuses it for new users and domains. " +
+                    "Use the background endpoint (https://backgroundapi.agilixbuzz.com) for background processing, " +
+                    "or the interactive endpoint (https://interactiveapi.agilixbuzz.com) for requests a user is waiting on. " +
+                    "See 'API Deprecation' and 'API Time Limiting' in the Buzz API documentation.");
             }
-
-            serverUrl = serverUrl.Trim().TrimEnd('/');
-            ServerUrl = serverUrl;
-            UserAgent = userAgent;
-            Verbose = verbose;
-            Timeout = timeout;
-
-            _httpClient = new();
-            _httpClient.DefaultRequestHeaders.Add("User-Agent", UserAgent);
-            _httpClient.Timeout = TimeSpan.FromMilliseconds(Timeout);
-
-            _logger = null;
-            _autoLoginEnabled = true;
-            _autoLoginUserspace = userspace;
-            _autoLoginUsername = username;
-            _autoLoginPassword = password;
-
-            _oauthEnabled = false;
-            _oauthUserId = string.Empty;
-            _oauthKid = string.Empty;
-            _oauthRsa = null;
-            _oauthTokenEndpoint = string.Empty;
+            return url;
         }
 
         /// <summary>
@@ -218,6 +173,10 @@ namespace BuzzAPISample
         /// <param name="verbose">Include verbose logging</param>
         /// <param name="timeout">Timeout in milliseconds for requests</param>
         /// <param name="logger">Optional logger for retry, rate-limit, and token events</param>
+        /// <exception cref="ArgumentException">
+        ///   A required value is missing, or <paramref name="serverUrl"/> names a deprecated endpoint
+        ///   (see <see cref="CheckServerUrl"/>).
+        /// </exception>
         public BuzzApiClient(string serverUrl, string userAgent, string oauthUserId, string oauthKid, RSA privateKey,
             bool verbose = false, int timeout = 600000, ILogger<BuzzApiClient>? logger = null)
         {
@@ -228,7 +187,7 @@ namespace BuzzAPISample
             if (privateKey is null)
                 throw new ArgumentNullException(nameof(privateKey));
 
-            serverUrl = serverUrl.Trim().TrimEnd('/');
+            serverUrl = CheckServerUrl(serverUrl);
             ServerUrl = serverUrl;
             UserAgent = userAgent;
             Verbose = verbose;
@@ -239,59 +198,11 @@ namespace BuzzAPISample
             _httpClient.Timeout = TimeSpan.FromMilliseconds(Timeout);
 
             _logger = logger;
-            _autoLoginEnabled = false;
-            _autoLoginUserspace = string.Empty;
-            _autoLoginUsername = string.Empty;
-            _autoLoginPassword = string.Empty;
 
-            _oauthEnabled = true;
             _oauthUserId = oauthUserId;
             _oauthKid = oauthKid;
             _oauthRsa = privateKey;
             _oauthTokenEndpoint = $"{serverUrl}/api/oauth/token";
-        }
-
-        /// <summary>
-        /// Uses the auto login user information to call the login3 API and set the token
-        /// </summary>
-        /// <param name="cancel">Cancellation token</param>
-        /// <returns>The json returned from the login API</returns>
-        public async ValueTask<JsonNode> Login(CancellationToken cancel = default)
-        {
-            if (_autoLoginEnabled)
-            {
-                return await Login(_autoLoginUserspace, _autoLoginUsername, _autoLoginPassword, cancel);
-            }
-
-            throw new Exception("This method can only be used if the instance of BuzzApiClient was created with auto login");
-        }
-
-        /// <summary>
-        /// Calls the login3 API and sets the token
-        /// </summary>
-        /// <param name="userspace">The userspace of the user to login</param>
-        /// <param name="username">The user's username</param>
-        /// <param name="password">The user's password</param>
-        /// <param name="cancel">Cancellation token</param>
-        /// <returns>The json returned from the login API</returns>
-        public async ValueTask<JsonNode> Login(string userspace, string username, string password, CancellationToken cancel = default)
-        {
-            var loginJson = new JsonObject
-            {
-                ["request"] = new JsonObject
-                    {
-                        ["cmd"] = "login3",
-                        ["username"] = $"{userspace}/{username}",
-                        ["password"] = password
-                }
-            };
-
-            JsonNode responseJson = VerifyResponse(await JsonRequest(HttpMethod.Post, json: loginJson, includeToken: false, cancel: cancel));
-
-            JsonNode? tokenNode = responseJson["user"]?["token"];
-            Token = tokenNode?.ToString();
-
-            return responseJson;
         }
 
         /// <summary>
@@ -300,6 +211,9 @@ namespace BuzzAPISample
         /// <param name="responseJson">The json to verify</param>
         /// <param name="checkChildResponses">If VerifyResponse should check child responses. These are returned in APIs that can do multiple things, like CreateUsers which can make multiple users.</param>
         /// <returns>Verified and non-null json</returns>
+        /// <exception cref="BuzzApiDeprecatedException">
+        ///   The response, or an item within a batch or multi-object response, has the code "ApiDeprecated".
+        /// </exception>
         public JsonNode VerifyResponse(JsonNode? responseJson, bool checkChildResponses = true)
         {
             if (responseJson == null)
@@ -323,6 +237,11 @@ namespace BuzzAPISample
                 if (IsThrottleCode(code))
                     throw new BuzzApiThrottledException($"Buzz API call was throttled ({code}): {responseText}", code, responseJson, Array.Empty<int>(),
                         statusCode: ThrottleStatusCode(HttpStatusCode.OK, code));
+                if (code == _deprecatedCode)
+                {
+                    string? message = jsonToVerify is JsonObject ? jsonToVerify["message"]?.ToString() : null;
+                    throw new BuzzApiDeprecatedException($"Buzz refused a deprecated API: {(string.IsNullOrEmpty(message) ? responseText : message)}");
+                }
                 throw new Exception($"Buzz API call failed. Expected response.code to be OK, found: {responseText}");
             }
 
@@ -372,7 +291,7 @@ namespace BuzzAPISample
         {
             if (includeToken)
             {
-                if (_oauthEnabled && (Token is null || DateTimeOffset.UtcNow >= _oauthTokenExpiry - _oauthTokenRefreshMargin))
+                if (Token is null || DateTimeOffset.UtcNow >= _oauthTokenExpiry - _oauthTokenRefreshMargin)
                 {
                     await _oauthTokenLock.WaitAsync(cancel);
                     try
@@ -384,11 +303,6 @@ namespace BuzzAPISample
                     {
                         _oauthTokenLock.Release();
                     }
-                }
-                else if (_autoLoginEnabled && Token is null)
-                {
-                    _logger?.LogInformation("Attempting to login");
-                    await Login(cancel);
                 }
             }
 
@@ -402,7 +316,7 @@ namespace BuzzAPISample
                 authenticationRejected = GetResponseCode(responseNode) == "NoAuthentication";
             }
             // REST-style endpoints report an expired or revoked token as HTTP 401, possibly with no envelope
-            catch (HttpRequestException e) when (e.StatusCode == HttpStatusCode.Unauthorized && includeToken && Token is not null && (_oauthEnabled || _autoLoginEnabled))
+            catch (HttpRequestException e) when (e.StatusCode == HttpStatusCode.Unauthorized && includeToken && Token is not null)
             {
                 responseNode = null;
                 authenticationRejected = true;
@@ -411,27 +325,15 @@ namespace BuzzAPISample
             // If the token expired or was revoked, re-authenticate and retry the request once
             if (includeToken && Token is not null && authenticationRejected)
             {
-                if (_oauthEnabled)
+                _logger?.LogTrace("Re-authenticating via OAuth because the request returned code \"NoAuthentication\"");
+                await _oauthTokenLock.WaitAsync(cancel);
+                try
                 {
-                    _logger?.LogTrace("Re-authenticating via OAuth because the request returned code \"NoAuthentication\"");
-                    await _oauthTokenLock.WaitAsync(cancel);
-                    try
-                    {
-                        await AuthenticateOAuth(cancel);
-                    }
-                    finally
-                    {
-                        _oauthTokenLock.Release();
-                    }
+                    await AuthenticateOAuth(cancel);
                 }
-                else if (_autoLoginEnabled)
+                finally
                 {
-                    _logger?.LogTrace("Attempting to re-login because the request returned code \"NoAuthentication\"");
-                    await Login(cancel);
-                }
-                else
-                {
-                    return responseNode;
+                    _oauthTokenLock.Release();
                 }
                 // content is StringContent (ByteArrayContent-backed) so its stream rewinds on re-read — safe to reuse.
                 responseNode = await RequestWithRetry(httpMethod, cmd, parameters, content, includeToken, cancel: cancel);
@@ -448,11 +350,6 @@ namespace BuzzAPISample
         private async ValueTask<JsonNode?> RequestWithRetry(HttpMethod httpMethod, string? cmd, string? parameters, HttpContent? content,
             bool includeToken = true, string acceptsContentType = "application/json", CancellationToken cancel = default)
         {
-            // OAuth uses Authorization: Bearer header; password auth uses _token query parameter
-            if (!_oauthEnabled && includeToken && Token is not null)
-            {
-                parameters = ((parameters is not null) ? $"{parameters}&" : "") + $"_token={Uri.EscapeDataString(Token)}";
-            }
             string requestUri = ServerUrl + "/cmd" + (cmd is not null ? $"/{cmd}" : "") + (parameters is not null ? $"?{parameters}" : "");
 
             int retriesRemaining = _retriesToMake;
@@ -466,7 +363,8 @@ namespace BuzzAPISample
                 try
                 {
                     using HttpRequestMessage httpRequestMessage = new(httpMethod, requestUri);
-                    if (_oauthEnabled && includeToken && Token is not null)
+                    // The OAuth access token goes in the Authorization: Bearer header
+                    if (includeToken && Token is not null)
                     {
                         httpRequestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token);
                     }
@@ -542,7 +440,7 @@ namespace BuzzAPISample
                 // catch exceptions here but only if there are retries remaining and the exception is one that allows retries.
                 // A success body that fails to parse is not retried: the server already ran the command, and resending
                 // a mutation (or a batch) could repeat it.
-                catch (Exception e) when (retriesRemaining > 0 && e is not BuzzApiThrottledException && !IsParseException(e)
+                catch (Exception e) when (retriesRemaining > 0 && e is not BuzzApiThrottledException && e is not BuzzApiDeprecatedException && !IsParseException(e)
                     && (e is not HttpRequestException requestException || DoesStatusCodeAllowRetry(requestException.StatusCode)))
                 {
                     _logger?.LogTrace("Retryable exception invoking {Command} with {Method}: {ErrorType}, {ErrorMessage}", cmd, httpMethod, e.GetType(), e.Message);
@@ -574,7 +472,7 @@ namespace BuzzAPISample
                 // JWTs expire in 2 minutes and a throttle wait can be up to 10, so an assertion built
                 // before the wait (or reused from an earlier attempt) could be past its exp claim.
                 await WaitForThrottleWindow(cancel);
-                string assertion = BuildClientAssertion(_oauthRsa!, _oauthUserId, _oauthKid, _oauthTokenEndpoint);
+                string assertion = BuildClientAssertion(_oauthRsa, _oauthUserId, _oauthKid, _oauthTokenEndpoint);
                 var formFields = new[]
                 {
                     new KeyValuePair<string, string>("grant_type",            "client_credentials"),
@@ -595,7 +493,8 @@ namespace BuzzAPISample
                         string body = await response.Content.ReadAsStringAsync(cancel);
                         // The token endpoint answers with RFC 6749 errors rather than the DLAP envelope:
                         // rate limits and backend pressure are 429/503 with error "temporarily_unavailable" and Retry-After.
-                        string? oauthError = TryParseEnvelope(body, response.Content.Headers.ContentType?.MediaType)?["error"]?.ToString();
+                        JsonObject? errorJson = TryParseEnvelope(body, response.Content.Headers.ContentType?.MediaType) as JsonObject;
+                        string? oauthError = errorJson?["error"]?.ToString();
                         if (response.StatusCode == HttpStatusCode.TooManyRequests || response.StatusCode == HttpStatusCode.ServiceUnavailable || oauthError == "temporarily_unavailable")
                         {
                             TimeSpan? serverWait = GetServerDirectedWait(response.Headers);
@@ -615,6 +514,13 @@ namespace BuzzAPISample
                                 oauthError, null, Array.Empty<int>(), serverWait, ThrottleStatusCode(response.StatusCode, null));
                         }
                         _logger?.LogError("OAuth token request failed: {StatusCode} {Body}", response.StatusCode, body);
+                        // The token endpoint reports a deprecated endpoint host name in the OAuth error format. Retrying cannot help.
+                        if (oauthError == "unauthorized_client")
+                        {
+                            string? description = errorJson?["error_description"]?.ToString();
+                            throw new BuzzApiDeprecatedException(
+                                $"Buzz refused the OAuth token request: {(string.IsNullOrEmpty(description) ? body : description)}", response.StatusCode);
+                        }
                         throw new HttpRequestException($"OAuth token request failed ({response.StatusCode}): {body}", null, response.StatusCode);
                     }
 
@@ -641,7 +547,7 @@ namespace BuzzAPISample
                     response.Dispose();
                     return;
                 }
-                catch (Exception e) when (retriesRemaining > 0 && e is not BuzzApiThrottledException && (e is not HttpRequestException rex || DoesStatusCodeAllowRetry(rex.StatusCode)))
+                catch (Exception e) when (retriesRemaining > 0 && e is not BuzzApiThrottledException && e is not BuzzApiDeprecatedException && (e is not HttpRequestException rex || DoesStatusCodeAllowRetry(rex.StatusCode)))
                 {
                     response?.Dispose();
                     TimeSpan wait = GetRetryWaitDuration(retryHeader, baseWaitDuration);
@@ -1000,7 +906,7 @@ namespace BuzzAPISample
 
         private void TraceRequest(string requestUri)
         {
-            // Strip _token query parameter before logging — password-auth paths append it to the URI.
+            // Strip any _token query parameter before logging, in case a caller passed a session token in the parameters.
             // Body is never logged: request bodies contain credentials (password, MFA code, client_assertion).
             string redactedUri = RedactQueryParam(requestUri, "_token");
             if (Verbose)

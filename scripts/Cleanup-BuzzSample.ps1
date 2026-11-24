@@ -107,6 +107,24 @@ if (-not $ServerUrl -or -not $OAuthUserId) {
     exit 1
 }
 
+# The original, single API endpoint (api.agilixbuzz.com) is deprecated for integrations:
+# Buzz refuses it (code "ApiDeprecated") for users and domains created after the
+# deprecation was enforced.  Refuse it here, before asking for a password.
+# BuzzApiClient.CheckServerUrl makes the same check.
+#   https://interactiveapi.agilixbuzz.com/docs/entry/Concept/ApiDeprecation.md
+function Assert-BuzzServerUrl([string] $url) {
+    $u = "$url".Trim().TrimEnd('/')
+    if ($u -notmatch '://') { $u = "https://$u" }
+    $parsed = $null
+    if ([uri]::TryCreate($u, [UriKind]::Absolute, [ref] $parsed) -and $parsed.Host -eq 'api.agilixbuzz.com') {
+        Write-Host ""
+        Write-Host "  api.agilixbuzz.com is deprecated for API integrations, and Buzz refuses it for new users and domains. Use the background endpoint (https://backgroundapi.agilixbuzz.com) for background processing, or the interactive endpoint (https://interactiveapi.agilixbuzz.com) for requests a user is waiting on. See 'API Deprecation' and 'API Time Limiting' in the Buzz API documentation." -ForegroundColor Red
+        Write-Host "  Change serverUrl in buzz-config.json, then re-run this script." -ForegroundColor Yellow
+        exit 1
+    }
+}
+Assert-BuzzServerUrl $ServerUrl
+
 $StoreLocation = if ($StoreLocStr -eq 'LocalMachine') {
     [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine
 } else {
@@ -190,7 +208,7 @@ while ($null -eq $AdminToken) {
     # login3 answers SecondFactorRequired when the password was right but the account
     # has MFA configured, returning a short-lived token good only for
     # secondfactorauthenticate.  That call returns the real session token.
-    #   https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
+    #   https://interactiveapi.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
     if ($loginCode -eq 'SecondFactorConfigurationNowRequired') {
         Write-Host ''
         Write-Host '  This account must configure multi-factor authentication before it can' -ForegroundColor Red
@@ -246,6 +264,16 @@ while ($null -eq $AdminToken) {
 
         $loginCode = Get-JsonProp (Get-JsonProp $loginResp 'response') 'code'
         if (-not $loginCode) { $loginCode = Get-JsonProp $loginResp 'code' }
+    }
+
+    # Buzz refuses a deprecated endpoint host name or sign-in for new users and
+    # domains.  Trying again cannot help, so stop and show what to use instead.
+    if ($loginCode -eq 'ApiDeprecated') {
+        $loginMsg = Get-JsonProp (Get-JsonProp $loginResp 'response') 'message'
+        if (-not $loginMsg) { $loginMsg = 'Buzz refused this request because it uses a deprecated API.' }
+        Write-Host ''
+        Write-Host "  $loginMsg" -ForegroundColor Red
+        exit 1
     }
 
     if ($loginCode -ne 'OK') {

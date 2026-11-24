@@ -13,4 +13,21 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.4" />
   </ItemGroup>
 
+  <!-- Quick start only: scripts/Run-BuzzSample.ps1 and scripts/run-buzz-sample.sh build with the
+       SampleApplicationName property set, which defines YOUR_APPLICATION_NAME for that build alone in a
+       file generated under obj/, so the quick start runs without Program.cs being edited.  A build without
+       the property leaves it undefined, so Program.cs does not build until you name your application. -->
+  <Target Name="DefineQuickStartApplicationName" BeforeTargets="BeforeCompile"
+          Condition="'$(SampleApplicationName)' != ''">
+    <PropertyGroup>
+      <QuickStartNameFile>$(IntermediateOutputPath)QuickStartApplicationName.g.cs</QuickStartNameFile>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(QuickStartNameFile)" Overwrite="true" WriteOnlyWhenDifferent="true"
+                      Lines="// &lt;auto-generated/&gt;;global using static QuickStartApplicationName%3B;internal static class QuickStartApplicationName { internal const string YOUR_APPLICATION_NAME = &quot;$(SampleApplicationName)&quot;%3B }" />
+    <ItemGroup>
+      <Compile Include="$(QuickStartNameFile)" />
+      <FileWrites Include="$(QuickStartNameFile)" />
+    </ItemGroup>
+  </Target>
+
 </Project>
